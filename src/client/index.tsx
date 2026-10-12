@@ -87,7 +87,147 @@ function chipStyle(active: boolean): React.CSSProperties {
   }
 }
 
+interface EnvItem {
+  readonly id: string
+  readonly label: string
+  readonly ok: boolean
+  readonly needed: boolean
+  readonly detail: string
+  readonly installable: boolean
+}
+
+interface DepsPayload {
+  readonly platform?: string
+  readonly manager?: string
+  readonly root?: boolean
+  readonly ready?: boolean
+  readonly items?: readonly EnvItem[]
+  readonly missing?: readonly string[]
+}
+
+/**
+ * First-entry checklist: the window shows what is installed, what is missing,
+ * and installs a row on demand. Package installation is always user-triggered.
+ */
+function EnvPanel(): React.ReactElement {
+  const [env, setEnv] = useState<DepsPayload | null>(null)
+  const [busy, setBusy] = useState<string | null>(null)
+  const [note, setNote] = useState<string | null>(null)
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch(DEPS_PATH, { headers: { accept: 'application/json' } })
+      if (res.ok) setEnv((await res.json()) as DepsPayload)
+    } catch {
+      /* offline: the parent already reports it */
+    }
+  }, [])
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  const install = useCallback(
+    async (deps?: readonly string[]) => {
+      setBusy(deps?.[0] ?? 'all')
+      setNote(null)
+      try {
+        const res = await fetch(DEPS_PATH, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(deps === undefined ? {} : { deps }),
+        })
+        const report = (await res.json()) as { installed?: string[]; failed?: string[]; error?: string }
+        if (typeof report.error === 'string') setNote(report.error)
+        else {
+          const failed = report.failed?.length ? `；失败：${report.failed.join('、')}` : ''
+          setNote(`已安装 ${report.installed?.join('、') || '无'}${failed}`)
+        }
+        await load()
+      } catch {
+        setNote('安装请求失败，请查看 DSH 日志')
+      } finally {
+        setBusy(null)
+      }
+    },
+    [load],
+  )
+
+  const items = env?.items ?? []
+  const missing = items.filter((item) => item.needed && !item.ok)
+  const complete = missing.length === 0
+
+  return (
+    <div style={styles.env}>
+      <div style={styles.envHead}>
+        环境检测：{complete ? '完整' : `缺少 ${missing.length} 项`}
+      </div>
+      {items.map((item) => (
+        <div key={item.id} style={styles.envRow}>
+          <span style={{ width: 14, color: item.ok ? '#34d399' : item.needed ? '#f87171' : '#6b7280' }}>
+            {item.ok ? '✓' : item.needed ? '✗' : '–'}
+          </span>
+          <span style={{ minWidth: 170 }}>{item.label}</span>
+          <span style={styles.envDetail as React.CSSProperties} title={item.detail}>
+            {item.detail}
+          </span>
+          {!item.ok && item.installable ? (
+            <button
+              type="button"
+              style={chipStyle(false)}
+              disabled={busy !== null}
+              onClick={() => void install([item.id])}
+            >
+              {busy === item.id ? '安装中…' : '安装'}
+            </button>
+          ) : null}
+        </div>
+      ))}
+      {items.length === 0 ? <div style={{ opacity: 0.6 }}>正在检测…</div> : null}
+      <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
+        <button type="button" style={chipStyle(true)} disabled={busy !== null || complete} onClick={() => void install()}>
+          {busy === 'all' ? '安装中…' : '一键安装缺失项'}
+        </button>
+        <button type="button" style={chipStyle(false)} disabled={busy !== null} onClick={() => void load()}>
+          重新检测
+        </button>
+      </div>
+      {env?.platform !== undefined ? (
+        <div style={{ marginTop: 8, opacity: 0.6, fontSize: 11 }}>
+          {env.platform} · {env.manager} · {env.root === true ? 'root 直接安装' : 'sudo -n 安装（需免密 sudo）'}
+        </div>
+      ) : null}
+      {note !== null ? <div style={{ marginTop: 6 }}>{note}</div> : null}
+    </div>
+  )
+}
+
 const styles: Record<string, React.CSSProperties> = {
+  env: {
+    flex: '1 1 auto',
+    overflow: 'auto',
+    padding: '10px 12px',
+    background: '#151515',
+    color: '#d1d5db',
+    fontSize: 12,
+    lineHeight: 1.7,
+  },
+  envHead: { fontWeight: 600, marginBottom: 6 },
+  envRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    padding: '2px 0',
+    borderBottom: '1px solid rgba(255,255,255,0.06)',
+  },
+  envDetail: {
+    flex: '1 1 auto',
+    opacity: 0.6,
+    fontSize: 11,
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+  },
   tabs: {
     display: 'flex',
     gap: 4,
@@ -166,8 +306,8 @@ const styles: Record<string, React.CSSProperties> = {
   },
 }
 
-function stateText(snapshot: StackSnapshot | null, offline: boolean): string {
-  if (offline) return '🟡 插件未连接'
+function stateText(snapshot: StackSnapshot | null, offline: string | null): string {
+  if (offline !== null) return `🟡 ${offline}`
   if (snapshot === null) return '⏳ 检查中…'
   return snapshot.ready ? `🟢 就绪 · CDP ${snapshot.cdpPort}` : `🔴 ${snapshot.message ?? '未就绪'}`
 }
@@ -244,7 +384,7 @@ function ScreencastView(): React.ReactElement {
 function BrowserPreviewWindow(): React.ReactElement {
   const [open, setOpen] = useState(false)
   const [snapshot, setSnapshot] = useState<PreviewStatus | null>(null)
-  const [offline, setOffline] = useState(false)
+  const [offline, setOffline] = useState<string | null>(null)
   const [position, setPosition] = useState<{ left: number; top: number } | null>(null)
   const panelRef = useRef<HTMLDivElement | null>(null)
   const dragRef = useRef<{ dx: number; dy: number } | null>(null)
@@ -254,13 +394,15 @@ function BrowserPreviewWindow(): React.ReactElement {
     const poll = async (): Promise<void> => {
       try {
         const res = await fetch(STATUS_PATH, { headers: { accept: 'application/json' } })
-        if (!res.ok) throw new Error(`status ${res.status}`)
+        // Surface why: a stale tab gets 403 from the trust fence, a restarting
+        // host refuses the connection — different fixes.
+        if (!res.ok) throw new Error(`插件未响应（HTTP ${res.status}）`)
         const data = (await res.json()) as PreviewStatus
         if (cancelled) return
         setSnapshot(data)
-        setOffline(false)
-      } catch {
-        if (!cancelled) setOffline(true)
+        setOffline(null)
+      } catch (error) {
+        if (!cancelled) setOffline(error instanceof Error ? error.message : '插件未连接')
       }
     }
     void poll()
@@ -352,40 +494,10 @@ function BrowserPreviewWindow(): React.ReactElement {
     void selectSession(current.id)
   }, [follow, current?.id, snapshot?.selected, snapshot?.sessions, selectSession])
 
-  /** Opt-in dependency install: OS packages are never installed unasked. */
-  const [installing, setInstalling] = useState(false)
-  const [installNote, setInstallNote] = useState<string | null>(null)
-
-  const runInstall = useCallback(async () => {
-    setInstalling(true)
-    setInstallNote(null)
-    try {
-      const res = await fetch(DEPS_PATH, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({}),
-      })
-      const report = (await res.json()) as {
-        installed?: string[]
-        failed?: string[]
-        log?: string[]
-        error?: string
-      }
-      if (typeof report.error === 'string') {
-        setInstallNote(report.error)
-        return
-      }
-      const done = report.installed?.join('、') ?? '无'
-      const failed = report.failed?.length ? `；失败：${report.failed?.join('、')}` : ''
-      setInstallNote(`已安装 ${done}${failed}`)
-    } catch {
-      setInstallNote('安装请求失败，请查看 DSH 日志')
-    } finally {
-      setInstalling(false)
-    }
-  }, [])
-
   const ready = snapshot?.ready === true
+  // `env` shows the dependency checklist even when everything is fine.
+  const [view, setView] = useState<'preview' | 'env'>('preview')
+  const showEnv = !ready || view === 'env'
   const [reloadKey, setReloadKey] = useState(0)
   // VNC mode has a real noVNC page; screencast mode gets the plugin's own viewer.
   const openHref = snapshot?.previewMode === 'vnc' ? NOVNC_SRC : VIEW_PATH
@@ -470,40 +582,18 @@ function BrowserPreviewWindow(): React.ReactElement {
                 </button>
               )
             })}
+            <button
+              type="button"
+              style={{ ...chipStyle(view === 'env'), marginLeft: 'auto' }}
+              title="依赖环境检测"
+              onClick={() => setView((value) => (value === 'env' ? 'preview' : 'env'))}
+            >
+              {view === 'env' ? '返回预览' : '环境'}
+            </button>
           </div>
-          {!ready ? (
-            <div style={styles.ghost}>
-              <div>
-                <div>{stateText(snapshot, offline)}</div>
-                {snapshot !== null && snapshot.missing.length > 0 ? (
-                  <div style={{ marginTop: 8 }}>
-                    缺少：{snapshot.missing.join('、')}
-                    <br />
-                    <code>
-                      {snapshot.platform?.manager === 'apt'
-                        ? 'apt install -y xvfb chromium x11vnc novnc websockify'
-                        : 'dnf install -y xorg-x11-server-Xvfb chromium x11vnc novnc python3-websockify'}
-                    </code>
-                    {snapshot.platform !== null && snapshot.platform !== undefined ? (
-                      <div style={{ marginTop: 8 }}>
-                        <button
-                          type="button"
-                          style={{ ...chipStyle(false), padding: '3px 10px', fontSize: 12 }}
-                          disabled={installing}
-                          onClick={() => void runInstall()}
-                        >
-                          {installing ? '安装中…' : `一键安装（${snapshot.platform.manager}）`}
-                        </button>
-                        <div style={{ marginTop: 4, opacity: 0.7 }}>
-                          {snapshot.platform.root ? '以 root 直接安装' : '将通过 sudo -n 安装（需免密 sudo）'}
-                        </div>
-                      </div>
-                    ) : null}
-                    {installNote !== null ? <div style={{ marginTop: 6 }}>{installNote}</div> : null}
-                  </div>
-                ) : null}
-              </div>
-            </div>
+          {showEnv ? (
+            // First entry (and the `环境` tab): the checklist, not a bare error.
+            <EnvPanel />
           ) : snapshot?.selected === NO_TARGET ? (
             <div style={styles.ghost}>
               <div>

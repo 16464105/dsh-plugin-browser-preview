@@ -25,7 +25,7 @@ import {
 } from './shared.ts'
 import { Config } from './config.ts'
 import { BrowserStack } from './stack.ts'
-import { hasCjkFont, installDeps, platformInfo, type DepName } from './deps.ts'
+import { hasCjkFont, installDeps, platformInfo, probeEnvironment, type DepName } from './deps.ts'
 import { ScreencastBridge } from './cdp.ts'
 import { proxyHttpRequest, proxyWebSocket } from './proxy.ts'
 import { acceptWebSocket, readTextFrames, sendBinary } from './ws.ts'
@@ -91,6 +91,7 @@ const OPEN_TOOL = 'mcp__browser__open'
  */
 let lastToolEvent: Record<string, unknown> | null = null
 let lastTargetRequest: Record<string, unknown> | null = null
+let lastEnvProbe: { items: unknown[]; missing: string[]; at: number } | null = null
 
 /**
  * The MCP bridge answers with `{ value: { content: [ … ] } }` where the first
@@ -244,6 +245,7 @@ export function apply(ctx: Context, config: Config): void {
                   viewers: viewers.size,
                   stream: bridge?.diagnostics ?? null,
                   platform: platformInfo(),
+                  dependencies: lastEnvProbe,
                   diagnostics: { lastToolEvent, lastTargetRequest },
                 })
               },
@@ -297,11 +299,21 @@ export function apply(ctx: Context, config: Config): void {
               path: DEPS_PATH,
               handler: async (req: IncomingMessage, res: ServerResponse) => {
                 if (req.method === 'GET') {
-                  const missing = stack.snapshot.missing
+                  // Probe fresh (not from the stack snapshot): the window shows
+                  // this on first entry, before the stack is running.
+                  const items = await probeEnvironment({
+                    vnc: config.vnc,
+                    novncWebRoot: config.novncWebRoot,
+                    chromiumBin: config.chromiumBin,
+                  })
+                  const missing = items.filter((item) => item.needed && !item.ok).map((item) => item.id)
+                  lastEnvProbe = { items, missing, at: Date.now() }
                   sendJson(res, 200, {
                     ...platformInfo(),
+                    ready: missing.length === 0,
+                    items,
                     missing,
-                    deps: await neededDeps(missing),
+                    deps: missing as DepName[],
                   })
                   return
                 }

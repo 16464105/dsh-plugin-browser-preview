@@ -63,9 +63,25 @@ curl -s http://127.0.0.1:3080/browser-preview/api/deps
 # {"platform":"tencentos/rhel/fedora","manager":"dnf","root":true,"missing":[],"deps":[]}
 ```
 
+预览窗口首次进入时（以及环境不完整时）展示的就是**环境清单**，标题栏最右侧的「环境」随时可以再打开：
+
+```
+环境检测：完整
+✓ 浏览器（Chromium / Chrome）   /usr/bin/google-chrome Google Chrome 155.0.8059.39
+✓ 中文字体（CJK）               Noto Sans CJK TC
+✓ Xvfb（VNC 模式）              /usr/bin/Xvfb
+✓ x11vnc（VNC 模式）            /usr/bin/x11vnc
+✓ websockify（VNC 模式）        /usr/bin/websockify
+✓ noVNC 静态资源（VNC 模式）     /usr/share/novnc
+[一键安装缺失项] [重新检测]
+tencentos/rhel/fedora · dnf · root 直接安装
+```
+
+缺失项显示 ✗ 且带「安装」按钮（只装那一项）；环境不完整时预览画面不会显示，先补齐再使用。
+
 **安装系统包默认是关的**（这类操作涉及 root 与网络，不该偷偷做），三种显式触发方式：
 
-1. 预览窗口里点「一键安装（dnf/apt）」
+1. 预览窗口的环境清单里点「安装」（单项）或「一键安装缺失项」
 2. 调接口：`curl -X POST http://127.0.0.1:3080/browser-preview/api/deps -d '{}'`（`{"deps":["chromium"]}` 可只装某一项）
 3. 配置 `autoInstall: 'on-start'`，插件启动时自动补齐
 

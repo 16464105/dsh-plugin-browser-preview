@@ -8,7 +8,9 @@
  * and every attempt is logged.
  */
 import { execFile } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { constants as fsConstants, existsSync, readFileSync } from 'node:fs'
+import { access } from 'node:fs/promises'
+import { join } from 'node:path'
 import { promisify } from 'node:util'
 
 const execFileAsync = promisify(execFile)
@@ -137,6 +139,118 @@ export async function installDeps(deps: readonly DepName[], timeoutMs = 600_000)
   }
 
   return { platform: platform.id, manager: platform.manager, root: isRoot(), installed, failed, log }
+}
+
+/** One row of the environment checklist the preview window renders. */
+export interface EnvItem {
+  readonly id: string
+  readonly label: string
+  readonly ok: boolean
+  /** Required for the configured preview mode. */
+  readonly needed: boolean
+  readonly detail: string
+  readonly installable: boolean
+}
+
+const CHROMIUM_CANDIDATES = ['chromium', 'chromium-browser', 'google-chrome', 'google-chrome-stable']
+
+async function which(command: string): Promise<string | undefined> {
+  if (command.includes('/')) return existsSync(command) ? command : undefined
+  for (const dir of (process.env.PATH ?? '').split(':').filter(Boolean)) {
+    const candidate = join(dir, command)
+    try {
+      await access(candidate, fsConstants.X_OK)
+      return candidate
+    } catch {
+      /* keep probing */
+    }
+  }
+  return undefined
+}
+
+async function versionOf(bin: string): Promise<string> {
+  try {
+    const out = await run(bin, ['--version'], 5000)
+    return out.split('\n')[0]?.trim() ?? ''
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * Probe everything the plugin needs, so the window can show a checklist on
+ * first entry instead of a bare "not ready".
+ */
+export async function probeEnvironment(options: {
+  readonly vnc: boolean
+  readonly novncWebRoot: string
+  readonly chromiumBin: string
+}): Promise<EnvItem[]> {
+  const items: EnvItem[] = []
+
+  let chromiumPath = options.chromiumBin === 'auto' ? undefined : await which(options.chromiumBin)
+  if (chromiumPath === undefined && options.chromiumBin === 'auto') {
+    for (const candidate of CHROMIUM_CANDIDATES) {
+      chromiumPath = await which(candidate)
+      if (chromiumPath !== undefined) break
+    }
+  }
+  const chromiumVersion = chromiumPath === undefined ? '' : await versionOf(chromiumPath)
+  items.push({
+    id: 'chromium',
+    label: '浏览器（Chromium / Chrome）',
+    ok: chromiumPath !== undefined,
+    needed: true,
+    detail: chromiumPath === undefined ? '未在 PATH 中找到' : `${chromiumPath} ${chromiumVersion}`,
+    installable: true,
+  })
+
+  const fontsOk = await hasCjkFont()
+  let fontDetail = '无中文字形（页面汉字会显示为方块）'
+  if (fontsOk) {
+    try {
+      fontDetail = (await run('fc-list', [':lang=zh'], 10_000)).split('\n')[0]?.split(':')[1]?.trim() ?? '已安装'
+    } catch {
+      fontDetail = '已安装'
+    }
+  }
+  items.push({
+    id: 'fonts',
+    label: '中文字体（CJK）',
+    ok: fontsOk,
+    needed: true,
+    detail: fontDetail,
+    installable: true,
+  })
+
+  const binaries: [DepName, string, string][] = [
+    ['Xvfb', 'Xvfb', 'Xvfb（VNC 模式）'],
+    ['x11vnc', 'x11vnc', 'x11vnc（VNC 模式）'],
+    ['websockify', 'websockify', 'websockify（VNC 模式）'],
+  ]
+  for (const [dep, command, label] of binaries) {
+    const found = await which(command)
+    items.push({
+      id: dep,
+      label,
+      ok: found !== undefined,
+      needed: options.vnc,
+      detail: found ?? '未在 PATH 中找到',
+      installable: true,
+    })
+  }
+
+  const novncOk = existsSync(options.novncWebRoot)
+  items.push({
+    id: 'novnc',
+    label: 'noVNC 静态资源（VNC 模式）',
+    ok: novncOk,
+    needed: options.vnc,
+    detail: novncOk ? options.novncWebRoot : `目录不存在：${options.novncWebRoot}`,
+    installable: true,
+  })
+
+  return items
 }
 
 /**
