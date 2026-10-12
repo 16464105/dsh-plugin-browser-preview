@@ -1,5 +1,4 @@
 node_modules/
 mcp/node_modules/
-lib/
 *.log
 *.tsbuildinfo

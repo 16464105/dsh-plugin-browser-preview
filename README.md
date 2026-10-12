@@ -73,14 +73,34 @@ curl -s http://127.0.0.1:3080/browser-preview/api/deps
 
 ## 安装
 
+**方式一：从 Git 仓库装（推荐，DSH 插件界面直接粘贴仓库地址）**
+
+```
+https://github.com/16464105/dsh-plugin-browser-preview
+```
+
+`lib/` 构建产物随仓库提供，所以安装过程**不需要跑构建脚本**（也因此不会被 pnpm 的 `allowBuilds` 拦截）。装完重启 DSH 即可。
+
+**方式二：本地目录（开发用）**
+
 ```bash
-cd /data/workspace/dsh-plugin-browser-preview
+cd dsh-plugin-browser-preview
 npm install --ignore-scripts   # esbuild + typescript
 node build.mjs                 # 产出 lib/index.js（host）与 lib/client.js（client）
 
-dsh plugin --profile web add /data/workspace/dsh-plugin-browser-preview
+dsh plugin --profile web add /绝对路径/dsh-plugin-browser-preview
 # 重启 DSH Web 服务
 ```
+
+> 改了 `src/` 之后记得 `node build.mjs` 并把 `lib/` 一起提交，远端用户才能拿到新代码。本地 `link:` 安装则只需重新构建 + 重启。
+
+**MCP 工具（可选）**：Agent 侧的 9 个浏览器工具由 `mcp/` 提供，它自己依赖 `@modelcontextprotocol/sdk`，git 安装不会带进来，需要执行一次：
+
+```bash
+cd /root/.dsh/profiles/web/node_modules/dsh-plugin-browser-preview/mcp && npm install
+```
+
+只用预览窗口、不需要 Agent 工具的话可以跳过。
 
 `dsh plugin add` 会把包名写进 profile 的 `dsh.profile.bundles`；本地目录装成 `link:`，改完代码 `node build.mjs` + 重启即可生效，不用重新 add。
 

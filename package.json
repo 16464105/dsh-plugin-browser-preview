@@ -25,7 +25,6 @@
   ],
   "scripts": {
     "build": "node build.mjs",
-    "prepare": "node build.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dsh": {
