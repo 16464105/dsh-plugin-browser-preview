@@ -68,6 +68,7 @@ Debian/Ubuntu：`apt install -y xvfb chromium x11vnc novnc websockify fonts-noto
 | --- | --- |
 | `GET /browser-preview/api/status` | 状态 + 诊断（进程、缺失二进制、抓帧计数、最后错误） |
 | `WS /browser-preview/stream` | 二进制 JPEG 帧下行；上行文本 JSON 回传鼠标/滚轮/键盘 |
+| `GET /browser-preview/view` | 独立全屏预览页（悬浮窗 ↗ 打开；screencast 模式自带查看器，`vnc` 模式 302 到 noVNC） |
 | `WS /browser-preview/ws` | noVNC 到 websockify 的 WebSocket 桥（仅 `vnc` 模式） |
 | `/browser-preview/*` | noVNC 静态资源反代（仅 `vnc` 模式） |
 
@@ -139,6 +140,8 @@ curl -X POST http://127.0.0.1:3080/mcp-manager/api/servers -H 'content-type: app
 6. **`/api`、`/plugins` 前缀被宿主占用**，插件路由不要碰。
 7. **`fetch` 在本进程内不可靠**：宿主可能装了全局 undici dispatcher（出向代理），读 CDP 的 `/json/list` 用 `node:http` 直连。
 8. **汉字显示成方块不是编码问题，是缺字体**。页面 UTF-8 解码正常、`innerText` 也正常，但 X11 下没有中文字形可用就只能画豆腐块。`fc-list :lang=zh` 为空即确诊，装 `google-noto-sans-cjk-ttc-fonts` + `fc-cache -f` 后**必须重启浏览器进程**（Chromium 在启动时读取字体表，热刷新无效）。
+9. **拖拽会吞掉按钮点击**。在 header 的 `onPointerDown` 里 `setPointerCapture`，会把按钮的 mousedown/mouseup 重定向到 header，按钮的 `onClick` 永远不触发（现象：三个按钮"完全没反应"，但拖动正常）。修法是 pointerdown 阶段就排除 `button, a`，并让按钮自身 `stopPropagation`。
+10. **两个内联 HTML/字符串的坑**：`renderViewerHtml` 用模板字符串拼 HTML，注释里出现反引号会提前闭合字符串（构建期就报错）；查看页脚本里的变量不能叫 `status` —— 它是内置的 `window.status`（字符串属性），赋值不会落到 DOM 元素上，状态文案会一直停在初始值。
 
 ## 目录
 

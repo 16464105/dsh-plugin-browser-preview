@@ -17,6 +17,9 @@ export const WS_PATH = `${ROUTE_PREFIX}/ws`
 /** Live CDP screencast frames (binary JPEG) plus input back-channel. */
 export const STREAM_PATH = `${ROUTE_PREFIX}/stream`
 
+/** Standalone full-screen viewer (what the ↗ button opens). */
+export const VIEW_PATH = `${ROUTE_PREFIX}/view`
+
 /** Upstream path websockify serves the VNC WebSocket on. */
 export const NOVNC_UPSTREAM_WS_PATH = '/websockify'
 

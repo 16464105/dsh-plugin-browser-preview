@@ -6,7 +6,15 @@
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { NOVNC_ENTRY_PATH, ROUTE_PREFIX, STATUS_PATH, STREAM_PATH, WS_PATH, type StackSnapshot } from '../shared.ts'
+import {
+  NOVNC_ENTRY_PATH,
+  ROUTE_PREFIX,
+  STATUS_PATH,
+  STREAM_PATH,
+  VIEW_PATH,
+  WS_PATH,
+  type StackSnapshot,
+} from '../shared.ts'
 
 export const inject = ['slots']
 
@@ -199,11 +207,19 @@ function BrowserPreviewWindow(): React.ReactElement {
   }, [])
 
   const onPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    // Capturing the pointer on the header would retarget the button's
+    // mousedown/mouseup away from it, so its click never fires.
+    if ((event.target as HTMLElement).closest('button, a') !== null) return
     const el = panelRef.current
     if (el === null) return
     const rect = el.getBoundingClientRect()
     dragRef.current = { dx: event.clientX - rect.left, dy: event.clientY - rect.top }
     event.currentTarget.setPointerCapture(event.pointerId)
+  }, [])
+
+  /** Keep the header's drag handler out of the buttons entirely. */
+  const stopDrag = useCallback((event: React.PointerEvent<HTMLElement>) => {
+    event.stopPropagation()
   }, [])
 
   const onPointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
@@ -224,6 +240,8 @@ function BrowserPreviewWindow(): React.ReactElement {
 
   const ready = snapshot?.ready === true
   const [reloadKey, setReloadKey] = useState(0)
+  // VNC mode has a real noVNC page; screencast mode gets the plugin's own viewer.
+  const openHref = snapshot?.previewMode === 'vnc' ? NOVNC_SRC : VIEW_PATH
 
   return (
     <>
@@ -248,13 +266,32 @@ function BrowserPreviewWindow(): React.ReactElement {
             <span>Agent 浏览器预览</span>
             <span style={{ opacity: 0.75 }}>{stateText(snapshot, offline)}</span>
             <span style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
-              <button type="button" style={styles.iconButton} title="重新连接" onClick={() => setReloadKey((value) => value + 1)}>
+              <button
+                type="button"
+                style={styles.iconButton}
+                title="重新连接"
+                onPointerDown={stopDrag}
+                onClick={() => setReloadKey((value) => value + 1)}
+              >
                 ⟳
               </button>
-              <a href={NOVNC_SRC} target="_blank" rel="noreferrer" style={{ ...styles.iconButton, textDecoration: 'none' }} title="新标签打开">
+              <a
+                href={openHref}
+                target="_blank"
+                rel="noreferrer"
+                style={{ ...styles.iconButton, textDecoration: 'none' }}
+                title="新标签打开"
+                onPointerDown={stopDrag}
+              >
                 ↗
               </a>
-              <button type="button" style={styles.iconButton} title="关闭" onClick={() => setOpen(false)}>
+              <button
+                type="button"
+                style={styles.iconButton}
+                title="关闭"
+                onPointerDown={stopDrag}
+                onClick={() => setOpen(false)}
+              >
                 ✕
               </button>
             </span>
@@ -281,7 +318,8 @@ function BrowserPreviewWindow(): React.ReactElement {
               sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
             />
           ) : (
-            <ScreencastView />
+            // remount on reload: the ⟳ button restarts the frame stream
+            <ScreencastView key={reloadKey} />
           )}
         </div>
       ) : null}

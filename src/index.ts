@@ -10,7 +10,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Duplex } from 'node:stream'
-import { NOVNC_UPSTREAM_WS_PATH, ROUTE_PREFIX, STATUS_PATH, STREAM_PATH, WS_PATH } from './shared.ts'
+import { NOVNC_UPSTREAM_WS_PATH, ROUTE_PREFIX, STATUS_PATH, STREAM_PATH, VIEW_PATH, WS_PATH } from './shared.ts'
 import { Config } from './config.ts'
 import { BrowserStack } from './stack.ts'
 import { ScreencastBridge } from './cdp.ts'
@@ -32,6 +32,51 @@ function sendJson(res: ServerResponse, status: number, payload: unknown): void {
 
 function escapeHtml(value: string): string {
   return value.replace(/[&<>"]/g, (char) => `&#${char.charCodeAt(0)};`)
+}
+
+/**
+ * Standalone full-screen viewer: the same frame stream without the DSH chrome.
+ * This is what the ↗ button opens in screencast mode (VNC mode opens noVNC).
+ */
+function renderViewerHtml(): string {
+  return `<!doctype html>
+<meta charset="utf-8">
+<title>Agent 浏览器预览</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden }
+  img { width: 100%; height: 100%; object-fit: contain; display: block }
+  #status { position: fixed; left: 10px; top: 10px; padding: 2px 8px; border-radius: 4px;
+            background: rgba(0,0,0,.55); color: #9ca3af; font: 12px/1.6 system-ui, sans-serif }
+</style>
+<img id="view" alt="browser">
+<div id="status">连接中…</div>
+<script>
+  var img = document.getElementById('view')
+  // named statusEl on purpose: window.status is a built-in string property,
+  // so a global var named status would never reach the element
+  var statusEl = document.getElementById('status')
+  var socket = new WebSocket((location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + ${JSON.stringify(STREAM_PATH)})
+  socket.binaryType = 'blob'
+  socket.onopen = function () { statusEl.textContent = '已连接' }
+  socket.onclose = function () { statusEl.textContent = '已断开' }
+  socket.onmessage = function (event) {
+    if (typeof event.data === 'string') return
+    statusEl.textContent = '已连接'
+    var previous = img.dataset.url
+    img.src = URL.createObjectURL(event.data)
+    img.dataset.url = img.src
+    if (previous) URL.revokeObjectURL(previous)
+  }
+  var send = function (payload) { if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(payload)) }
+  var rel = function (event) {
+    var rect = img.getBoundingClientRect()
+    return { x: (event.clientX - rect.left) / rect.width, y: (event.clientY - rect.top) / rect.height }
+  }
+  img.onmousedown = function (e) { send({ t: 'mouse', type: 'mousePressed', button: 'left', buttons: 1, clickCount: 1, ...rel(e) }) }
+  img.onmouseup = function (e) { send({ t: 'mouse', type: 'mouseReleased', button: 'left', buttons: 0, clickCount: 1, ...rel(e) }) }
+  img.onmousemove = function (e) { send({ t: 'mouse', type: 'mouseMoved', buttons: e.buttons, ...rel(e) }) }
+  img.onwheel = function (e) { send({ t: 'wheel', deltaX: e.deltaX, deltaY: e.deltaY, ...rel(e) }) }
+</script>`
 }
 
 export function apply(ctx: Context, config: Config): void {
@@ -80,6 +125,26 @@ export function apply(ctx: Context, config: Config): void {
               },
             }),
           `browser-preview: GET ${STATUS_PATH}`,
+        )
+
+        web.effect(
+          () =>
+            web.webServer.register({
+              kind: 'exact',
+              path: VIEW_PATH,
+              handler: async (_req: IncomingMessage, res: ServerResponse) => {
+                if (config.previewMode === 'vnc') {
+                  res.writeHead(302, {
+                    location: `${ROUTE_PREFIX}/vnc.html?path=${encodeURIComponent(WS_PATH)}&autoconnect=true&resize=scale`,
+                  })
+                  res.end()
+                  return
+                }
+                res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
+                res.end(renderViewerHtml())
+              },
+            }),
+          `browser-preview: GET ${VIEW_PATH}`,
         )
 
         web.effect(
