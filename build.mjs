@@ -10,9 +10,21 @@ import { build } from 'esbuild'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { readFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const pkg = JSON.parse(readFileSync(resolve(here, 'package.json'), 'utf8'))
+
+// Stamped into the client bundle so the running UI can be identified at a
+// glance — "is my page still on the old module?" was a real support cost.
+let revision = 'nogit'
+try {
+  revision = execFileSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: here, encoding: 'utf8' }).trim()
+} catch {
+  /* not a git checkout */
+}
+const buildId = `${pkg.version}+${revision}`
+const define = { __DSH_BUILD_ID__: JSON.stringify(buildId) }
 
 const platformModules = [
   'react',
@@ -35,6 +47,7 @@ await build({
   target: 'node18',
   // Resolved from the host at runtime, never bundled.
   external: ['@deepseek-ai/*'],
+  define,
   sourcemap: true,
   logLevel: 'info',
 })
@@ -48,6 +61,7 @@ await build({
   target: 'es2022',
   jsx: 'automatic',
   external: platformModules,
+  define,
   banner: {
     js:
       `window.__ModuleLoader__.load({\n` +

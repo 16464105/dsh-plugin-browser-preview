@@ -18,6 +18,10 @@ import {
 
 export const inject = ['slots']
 
+/** Replaced at build time by build.mjs (esbuild define). */
+declare const __DSH_BUILD_ID__: string
+const BUILD_ID = typeof __DSH_BUILD_ID__ === 'string' ? __DSH_BUILD_ID__ : 'dev'
+
 const POLL_MS = 3000
 const PANEL_WIDTH = 960
 const PANEL_HEIGHT = 600
@@ -265,6 +269,9 @@ function BrowserPreviewWindow(): React.ReactElement {
           <div style={styles.header} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp}>
             <span>Agent 浏览器预览</span>
             <span style={{ opacity: 0.75 }}>{stateText(snapshot, offline)}</span>
+            <span style={{ fontSize: 10, opacity: 0.45 }} title="客户端构建版本">
+              {BUILD_ID}
+            </span>
             <span style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
               <button
                 type="button"
