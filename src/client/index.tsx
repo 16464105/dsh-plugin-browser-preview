@@ -5,7 +5,10 @@
  */
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+// Type-only: brings ctx.uiSession / ctx.sessions onto the client context.
+import type {} from '@deepseek-ai/dsh-client-ui-session/client'
+import type {} from '@deepseek-ai/dsh-api-session-controller/client'
+import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import {
   NOVNC_ENTRY_PATH,
   ROUTE_PREFIX,
@@ -16,10 +19,33 @@ import {
   WS_PATH,
   type PreviewStatus,
   type StackSnapshot,
-  type TargetSummary,
 } from '../shared.ts'
 
-export const inject = ['slots']
+export const inject = ['slots', 'sessions', 'uiSession']
+
+/** The conversation the user is looking at, mirrored out of the client services. */
+interface SessionRef {
+  readonly id: string
+  readonly title: string
+}
+
+let currentSession: SessionRef | null = null
+const sessionListeners = new Set<() => void>()
+/** id → display title, so the tab strip can name sessions it is not showing. */
+const sessionTitles = new Map<string, string>()
+
+function publishSession(next: SessionRef | null): void {
+  if (currentSession?.id === next?.id && currentSession?.title === next?.title) return
+  currentSession = next
+  for (const listener of sessionListeners) listener()
+}
+
+const subscribeSession = (listener: () => void): (() => void) => {
+  sessionListeners.add(listener)
+  return () => sessionListeners.delete(listener)
+}
+
+const readSession = (): SessionRef | null => currentSession
 
 /** Replaced at build time by build.mjs (esbuild define). */
 declare const __DSH_BUILD_ID__: string
@@ -53,12 +79,6 @@ function chipStyle(active: boolean): React.CSSProperties {
     overflow: 'hidden',
     textOverflow: 'ellipsis',
   }
-}
-
-function labelOf(target: TargetSummary): string {
-  const text = (target.title || target.url).trim()
-  if (text.length === 0) return '(空白页)'
-  return text.length > 20 ? `${text.slice(0, 20)}…` : text
 }
 
 const styles: Record<string, React.CSSProperties> = {
@@ -260,6 +280,21 @@ function BrowserPreviewWindow(): React.ReactElement {
     }
   }, [])
 
+  /** Show the page that a given conversation opened. */
+  const selectSession = useCallback(async (sessionId: string) => {
+    try {
+      await fetch(TARGET_PATH, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ session: sessionId }),
+      })
+      const res = await fetch(STATUS_PATH, { headers: { accept: 'application/json' } })
+      if (res.ok) setSnapshot((await res.json()) as PreviewStatus)
+    } catch {
+      /* offline: the next poll picks it up */
+    }
+  }, [])
+
   const onPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     // Capturing the pointer on the header would retarget the button's
     // mousedown/mouseup away from it, so its click never fires.
@@ -291,6 +326,15 @@ function BrowserPreviewWindow(): React.ReactElement {
       event.currentTarget.releasePointerCapture(event.pointerId)
     }
   }, [])
+
+  const current = useSyncExternalStore(subscribeSession, readSession)
+  const [follow, setFollow] = useState(true)
+
+  // Switching conversations switches the preview to that conversation's page.
+  useEffect(() => {
+    if (!follow || current === null) return
+    void selectSession(current.id)
+  }, [follow, current?.id, selectSession])
 
   const ready = snapshot?.ready === true
   const [reloadKey, setReloadKey] = useState(0)
@@ -356,23 +400,27 @@ function BrowserPreviewWindow(): React.ReactElement {
           <div style={styles.tabs}>
             <button
               type="button"
-              style={chipStyle((snapshot?.selected ?? null) === null)}
-              title="跟随最新打开的页面"
-              onClick={() => void selectTarget(null)}
+              style={chipStyle(follow)}
+              title={follow ? '切换会话时自动显示该会话打开的页面（点击关闭）' : '手动选择要预览的会话（点击开启自动跟随）'}
+              onClick={() => setFollow((value) => !value)}
             >
-              自动跟随
+              跟随会话
             </button>
-            {(snapshot?.targets ?? []).map((target) => (
-              <button
-                key={target.id}
-                type="button"
-                style={chipStyle(snapshot?.selected === target.id)}
-                title={target.url}
-                onClick={() => void selectTarget(target.id)}
-              >
-                {labelOf(target)}
-              </button>
-            ))}
+            {(snapshot?.sessions ?? []).map((entry) => {
+              const page = snapshot?.targets.find((target) => target.id === entry.targetId)
+              return (
+                <button
+                  key={entry.sessionId}
+                  type="button"
+                  style={chipStyle(snapshot?.selected === entry.targetId)}
+                  title={`${sessionTitles.get(entry.sessionId) ?? entry.sessionId} — ${page?.url ?? '页面已关闭'}`}
+                  onClick={() => void selectSession(entry.sessionId)}
+                >
+                  {sessionTitles.get(entry.sessionId) ?? entry.sessionId.slice(0, 8)}
+                  {current?.id === entry.sessionId ? ' ●' : ''}
+                </button>
+              )
+            })}
           </div>
           {!ready ? (
             <div style={styles.ghost}>
@@ -406,6 +454,28 @@ function BrowserPreviewWindow(): React.ReactElement {
 }
 
 export function apply(ctx: ClientContext): void {
+  // Mirror the selected conversation into module state. The preview window is
+  // a root-scope overlay, so it cannot read the session from slot props.
+  ctx.effect(() => {
+    const read = (): SessionRef | null => {
+      const id = ctx.uiSession.adapter.current.getSnapshot().key as string | undefined
+      if (id === undefined) return null
+      const rows = Object.values(ctx.sessions.list.getSnapshot().byId)
+      for (const row of rows) if (row.displayTitle !== undefined) sessionTitles.set(row.id, row.displayTitle)
+      const summary = rows.find((row) => row.id === id)
+      return { id, title: summary?.displayTitle ?? id }
+    }
+    const sync = (): void => publishSession(read())
+    const offCurrent = ctx.uiSession.adapter.current.subscribe(sync)
+    const offList = ctx.sessions.list.subscribe(sync)
+    sync()
+    return () => {
+      offCurrent()
+      offList()
+      publishSession(null)
+    }
+  }, 'browser-preview: current session')
+
   ctx.slots.inject(
     'shell.overlay',
     () =>

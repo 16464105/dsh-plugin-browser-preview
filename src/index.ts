@@ -8,6 +8,8 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
+// Event + payload types for ctx.on('tools/result', …).
+import type {} from '@deepseek-ai/dsh-tools'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Duplex } from 'node:stream'
 import {
@@ -56,6 +58,30 @@ async function readJsonBody(req: IncomingMessage, limit = 4096): Promise<Record<
   } catch {
     return null
   }
+}
+
+/** Public tool name of the MCP `open` tool: `mcp__<server>__<rawName>`. */
+const OPEN_TOOL = 'mcp__browser__open'
+
+/**
+ * The MCP bridge answers with `{ value: { content: [ … ] } }` where the first
+ * text block is our JSON; pull `targetId` out so a session can be bound to the
+ * tab it opened.
+ */
+function targetIdFromResult(result: unknown): string | undefined {
+  const blocks = (result as { value?: { content?: unknown } } | undefined)?.value?.content
+  if (!Array.isArray(blocks)) return undefined
+  for (const block of blocks) {
+    const text = (block as { type?: string; text?: unknown } | null)?.text
+    if (typeof text !== 'string') continue
+    try {
+      const parsed = JSON.parse(text) as { targetId?: unknown }
+      if (typeof parsed.targetId === 'string') return parsed.targetId
+    } catch {
+      /* not JSON: ignore */
+    }
+  }
+  return undefined
 }
 
 /**
@@ -107,6 +133,8 @@ export function apply(ctx: Context, config: Config): void {
   const logger = ctx.logger('browser-preview')
   const stack = new BrowserStack(ctx, config)
   const viewers = new Set<Duplex>()
+  /** session id → the tab that session opened. */
+  const sessionTargets = new Map<string, string>()
 
   // Screencast fans one Chromium out to every open preview window; VNC mode
   // leaves the bridge uncreated and serves noVNC instead.
@@ -130,6 +158,19 @@ export function apply(ctx: Context, config: Config): void {
     await stack.stop()
   }, 'browser-preview: stack')
 
+  // Bind every session to the tab its Agent opened. The tool result carries the
+  // target id and exec.agent carries the session, so the preview can follow the
+  // selected conversation instead of guessing "the newest page".
+  ctx.on('tools/result', (exec, result) => {
+    if (exec.name !== OPEN_TOOL) return
+    const sessionId = exec.agent?.session?.id
+    const targetId = targetIdFromResult(result)
+    if (typeof sessionId !== 'string' || targetId === undefined) return
+    sessionTargets.set(sessionId, targetId)
+    // A freshly opened page is what the user wants to see right now.
+    bridge?.select(targetId)
+  })
+
   // webServer is optional so a headless profile still loads the plugin (CDP
   // stays useful without a Web carrier); only the routes depend on it.
   ctx.effect(
@@ -141,9 +182,15 @@ export function apply(ctx: Context, config: Config): void {
               kind: 'exact',
               path: STATUS_PATH,
               handler: async (_req: IncomingMessage, res: ServerResponse) => {
+                // Drop bindings whose tab has been closed.
+                const live = new Set((bridge?.targets ?? []).map((target) => target.id))
+                for (const [sessionId, targetId] of sessionTargets) {
+                  if (!live.has(targetId)) sessionTargets.delete(sessionId)
+                }
                 sendJson(res, 200, {
                   ...stack.snapshot,
                   targets: bridge?.targets ?? [],
+                  sessions: [...sessionTargets].map(([sessionId, targetId]) => ({ sessionId, targetId })),
                   selected: (bridge?.diagnostics?.selected as string | null) ?? null,
                   viewers: viewers.size,
                   stream: bridge?.diagnostics ?? null,
@@ -162,6 +209,7 @@ export function apply(ctx: Context, config: Config): void {
                 if (req.method === 'GET') {
                   sendJson(res, 200, {
                     targets: bridge?.targets ?? [],
+                    sessions: [...sessionTargets].map(([sessionId, targetId]) => ({ sessionId, targetId })),
                     selected: (bridge?.diagnostics?.selected as string | null) ?? null,
                   })
                   return
@@ -171,6 +219,14 @@ export function apply(ctx: Context, config: Config): void {
                   return
                 }
                 const body = await readJsonBody(req)
+                // `session` selects the tab that session opened — this is what
+                // the client sends when the user switches conversations.
+                if (typeof body?.session === 'string') {
+                  const id = sessionTargets.get(body.session) ?? null
+                  bridge?.select(id)
+                  sendJson(res, 200, { session: body.session, selected: id })
+                  return
+                }
                 const id = typeof body?.id === 'string' ? body.id : null
                 bridge?.select(id)
                 sendJson(res, 200, { selected: id })

@@ -65,10 +65,18 @@ export interface StackSnapshot {
   readonly message: string | undefined
 }
 
+/** One session's page: what the tab strip is really grouping by. */
+export interface SessionTarget {
+  readonly sessionId: string
+  readonly targetId: string
+}
+
 /** What {@link STATUS_PATH} actually returns: stack state plus preview state. */
 export interface PreviewStatus extends StackSnapshot {
   /** Pages open in the shared browser; several sessions share one instance. */
   readonly targets: readonly TargetSummary[]
+  /** Which page each session opened, learned from the MCP `open` results. */
+  readonly sessions: readonly SessionTarget[]
   /** Pinned target id, or null while following the newest page. */
   readonly selected: string | null
   readonly viewers: number
