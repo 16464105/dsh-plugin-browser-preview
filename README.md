@@ -37,9 +37,11 @@ dsh plugin --profile web add /data/workspace/dsh-plugin-browser-preview
 ```bash
 dnf install -y xorg-x11-server-Xvfb x11vnc novnc python3-websockify
 dnf install -y https://dl.google.com/linux/direct/google-chrome-stable_current_x86_64.rpm
+# 中文字体：缺了页面里的汉字会全变成方块
+dnf install -y google-noto-sans-cjk-ttc-fonts && fc-cache -f
 ```
 
-Debian/Ubuntu：`apt install -y xvfb chromium x11vnc novnc websockify`。
+Debian/Ubuntu：`apt install -y xvfb chromium x11vnc novnc websockify fonts-noto-cjk`。
 
 ## 配置
 
@@ -136,6 +138,7 @@ curl -X POST http://127.0.0.1:3080/mcp-manager/api/servers -H 'content-type: app
 5. **`registerUpgrade` 是精确路径**：noVNC 的 WS 路径必须固定（`vnc.html?path=/browser-preview/ws`），不能用前缀。
 6. **`/api`、`/plugins` 前缀被宿主占用**，插件路由不要碰。
 7. **`fetch` 在本进程内不可靠**：宿主可能装了全局 undici dispatcher（出向代理），读 CDP 的 `/json/list` 用 `node:http` 直连。
+8. **汉字显示成方块不是编码问题，是缺字体**。页面 UTF-8 解码正常、`innerText` 也正常，但 X11 下没有中文字形可用就只能画豆腐块。`fc-list :lang=zh` 为空即确诊，装 `google-noto-sans-cjk-ttc-fonts` + `fc-cache -f` 后**必须重启浏览器进程**（Chromium 在启动时读取字体表，热刷新无效）。
 
 ## 目录
 
