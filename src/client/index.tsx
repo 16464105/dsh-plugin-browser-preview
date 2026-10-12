@@ -504,6 +504,9 @@ function BrowserPreviewWindow(): React.ReactElement {
   }, [follow, current?.id, snapshot?.selected, snapshot?.sessions, selectSession])
 
   const ready = snapshot?.ready === true
+  // Following mode with nothing but about:blank open would render a black box:
+  // say so instead, it usually means the Agent is driving a different browser.
+  const hasVisiblePage = (snapshot?.targets ?? []).some((target) => target.url !== 'about:blank')
   // `env` shows the dependency checklist even when everything is fine.
   const [view, setView] = useState<'preview' | 'env'>('preview')
   const showEnv = !ready || view === 'env'
@@ -609,6 +612,18 @@ function BrowserPreviewWindow(): React.ReactElement {
                 <div>当前会话还没有打开页面</div>
                 <div style={{ marginTop: 8, opacity: 0.7 }}>
                   让 Agent 用浏览器工具打开一个页面，画面会自动出现在这里
+                </div>
+              </div>
+            </div>
+          ) : snapshot?.selected === null && !hasVisiblePage ? (
+            <div style={styles.ghost}>
+              <div>
+                <div>浏览器停在空白页，没有可预览的画面</div>
+                <div style={{ marginTop: 8, opacity: 0.7 }}>
+                  预览跟随的是本插件托管的浏览器（CDP {snapshot.cdpPort}）。
+                  <br />
+                  如果 Agent 用的是另一个浏览器实例（别的调试端口），画面不会出现在这里 ——
+                  让它改用 <code>mcp__browser__*</code> 工具打开页面即可。
                 </div>
               </div>
             </div>
