@@ -186,9 +186,10 @@ export function apply(ctx: Context, config: Config): void {
       at: Date.now(),
     }
     if (typeof sessionId !== 'string' || targetId === undefined) return
+    // Record only. Switching the picture here would let a background session
+    // steal the window from the conversation the user is reading; the client
+    // decides, because only it knows which conversation is on screen.
     sessionTargets.set(sessionId, targetId)
-    // A freshly opened page is what the user wants to see right now.
-    if (exec.name === OPEN_TOOL) bridge?.select(targetId)
   })
 
   // webServer is optional so a headless profile still loads the plugin (CDP

@@ -39,13 +39,25 @@ const pin = (targetId) => {
   if (typeof targetId === 'string' && targetId.length > 0) cdp.prefer(targetId)
 }
 
-const targetArg = { targetId: z.string().optional().describe('要操作的标签页 id（open 返回值）；省略则作用于最新页面') }
+const targetArg = {
+  targetId: z
+    .string()
+    .optional()
+    .describe('要操作的标签页 id（open 的返回值）。多个会话并行时请带上，否则可能落到别的会话刚打开的页面上'),
+}
 
-async function waitReady(timeoutMs = 20_000) {
+/**
+ * `expectNavigation` matters after creating a tab: a brand-new tab is already
+ * "complete" at about:blank, so a plain readyState check returns before the
+ * real page has loaded.
+ */
+async function waitReady(timeoutMs = 20_000, expectNavigation = false) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
-    const state = await cdp.evaluate('document.readyState').catch(() => undefined)
-    if (state === 'complete') return true
+    const state = await cdp.evaluate('[location.href, document.readyState]').catch(() => undefined)
+    const [href, ready] = Array.isArray(state) ? state : []
+    const navigated = !expectNavigation || (typeof href === 'string' && href !== 'about:blank')
+    if (navigated && ready === 'complete') return true
     await sleep(300)
   }
   return false
@@ -72,7 +84,7 @@ server.tool(
 
 server.tool(
   'open',
-  '新开一个标签页打开 URL（不复用现有页面，多个会话互不干扰）；返回 targetId 供后续工具指定',
+  '新开一个标签页打开 URL（不复用现有页面，多个会话互不干扰）；返回 targetId，后续调用请带上它以免串台',
   { url: z.string().describe('要打开的 http(s) 地址'), ...targetArg },
   async ({ url, targetId }) => {
     try {
@@ -87,7 +99,7 @@ server.tool(
         pin(id)
         await cdp.call('Page.enable')
       }
-      const ready = await waitReady()
+      const ready = await waitReady(20_000, true)
       return ok({
         targetId: id,
         ready,

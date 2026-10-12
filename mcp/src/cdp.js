@@ -39,6 +39,9 @@ export class Cdp {
     // Pinned target: several Agent sessions share this browser, so tools must
     // be able to say which tab they mean instead of always using "the last one".
     this.fixed = undefined
+    // Last tab this server touched. Preferring it over "the newest page" keeps
+    // a session from landing on a tab another session just opened.
+    this.lastUsed = undefined
     this.browserSocket = undefined
     this.browserPending = new Map()
     this.browserNextId = 1
@@ -69,7 +72,12 @@ export class Cdp {
     let page = this.fixed === undefined ? undefined : pages.find((t) => t.id === this.fixed)
     // The pinned tab was closed — fall back to following.
     if (this.fixed !== undefined && page === undefined) this.fixed = undefined
-    page = page ?? [...pages].reverse().find((t) => t.url !== 'about:blank') ?? pages[pages.length - 1]
+    page =
+      page ??
+      (this.lastUsed === undefined ? undefined : pages.find((t) => t.id === this.lastUsed)) ??
+      [...pages].reverse().find((t) => t.url !== 'about:blank') ??
+      pages[pages.length - 1]
+    if (page !== undefined) this.lastUsed = page.id
     if (page === undefined) throw new Error('浏览器里没有可用页面（CDP 端口未开放？）')
     if (page.webSocketDebuggerUrl === this.targetUrl && this.connected) return
     this.targetUrl = page.webSocketDebuggerUrl

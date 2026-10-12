@@ -340,6 +340,16 @@ function BrowserPreviewWindow(): React.ReactElement {
     void selectSession(current.id)
   }, [follow, current?.id, selectSession])
 
+  // Keep the picture aligned with the conversation being read: the session's
+  // binding can change (a new `open`, or a tab closed) without the selection
+  // changing, and a background session must not override it.
+  useEffect(() => {
+    if (!follow || current === null || snapshot === null) return
+    const binding = snapshot.sessions.find((entry) => entry.sessionId === current.id)
+    if (binding === undefined || snapshot.selected === binding.targetId) return
+    void selectSession(current.id)
+  }, [follow, current?.id, snapshot?.selected, snapshot?.sessions, selectSession])
+
   const ready = snapshot?.ready === true
   const [reloadKey, setReloadKey] = useState(0)
   // VNC mode has a real noVNC page; screencast mode gets the plugin's own viewer.
