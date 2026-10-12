@@ -64,6 +64,14 @@ async function readJsonBody(req: IncomingMessage, limit = 4096): Promise<Record<
 const OPEN_TOOL = 'mcp__browser__open'
 
 /**
+ * Diagnostics for the session binding: whether the host sees the tool result,
+ * and what the client asked for. Exposed on the status endpoint because this
+ * wiring cannot be exercised without a live Agent call.
+ */
+let lastToolEvent: Record<string, unknown> | null = null
+let lastTargetRequest: Record<string, unknown> | null = null
+
+/**
  * The MCP bridge answers with `{ value: { content: [ … ] } }` where the first
  * text block is our JSON; pull `targetId` out so a session can be bound to the
  * tab it opened.
@@ -162,13 +170,25 @@ export function apply(ctx: Context, config: Config): void {
   // target id and exec.agent carries the session, so the preview can follow the
   // selected conversation instead of guessing "the newest page".
   ctx.on('tools/result', (exec, result) => {
-    if (exec.name !== OPEN_TOOL) return
+    if (!exec.name.startsWith('mcp__browser__')) return
     const sessionId = exec.agent?.session?.id
-    const targetId = targetIdFromResult(result)
+    // `open` returns the new tab; every other tool can name one explicitly.
+    const targetId =
+      targetIdFromResult(result) ??
+      (typeof (exec.arguments as { targetId?: unknown } | undefined)?.targetId === 'string'
+        ? ((exec.arguments as { targetId: string }).targetId)
+        : undefined)
+    lastToolEvent = {
+      name: exec.name,
+      hasAgent: exec.agent !== undefined && exec.agent !== null,
+      sessionId: typeof sessionId === 'string' ? sessionId : null,
+      targetId: targetId ?? null,
+      at: Date.now(),
+    }
     if (typeof sessionId !== 'string' || targetId === undefined) return
     sessionTargets.set(sessionId, targetId)
     // A freshly opened page is what the user wants to see right now.
-    bridge?.select(targetId)
+    if (exec.name === OPEN_TOOL) bridge?.select(targetId)
   })
 
   // webServer is optional so a headless profile still loads the plugin (CDP
@@ -194,6 +214,7 @@ export function apply(ctx: Context, config: Config): void {
                   selected: (bridge?.diagnostics?.selected as string | null) ?? null,
                   viewers: viewers.size,
                   stream: bridge?.diagnostics ?? null,
+                  diagnostics: { lastToolEvent, lastTargetRequest },
                 })
               },
             }),
@@ -224,11 +245,13 @@ export function apply(ctx: Context, config: Config): void {
                 if (typeof body?.session === 'string') {
                   const id = sessionTargets.get(body.session) ?? null
                   bridge?.select(id)
+                  lastTargetRequest = { kind: 'session', session: body.session, resolved: id, at: Date.now() }
                   sendJson(res, 200, { session: body.session, selected: id })
                   return
                 }
                 const id = typeof body?.id === 'string' ? body.id : null
                 bridge?.select(id)
+                lastTargetRequest = { kind: 'id', id, at: Date.now() }
                 sendJson(res, 200, { selected: id })
               },
             }),

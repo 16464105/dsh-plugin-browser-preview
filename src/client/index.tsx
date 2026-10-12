@@ -37,6 +37,10 @@ const sessionTitles = new Map<string, string>()
 function publishSession(next: SessionRef | null): void {
   if (currentSession?.id === next?.id && currentSession?.title === next?.title) return
   currentSession = next
+  // Mirrored for troubleshooting: `window.__dshBrowserPreview.session`.
+  ;(window as unknown as { __dshBrowserPreview?: { session: SessionRef | null } }).__dshBrowserPreview = {
+    session: next,
+  }
   for (const listener of sessionListeners) listener()
 }
 
