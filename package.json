@@ -19,6 +19,7 @@
   "files": [
     "lib",
     "src",
+    "mcp",
     "build.mjs",
     "cordis.patch.yml",
     "README.md"
@@ -40,7 +41,7 @@
       ]
     },
     "compatibility": {
-      "dsh": ">=0.1.7 <0.2.0",
+      "dsh": ">=0.1.7 <0.3.0",
       "profiles": [
         "web"
       ]
