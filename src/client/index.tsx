@@ -10,6 +10,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import type {} from '@deepseek-ai/dsh-api-session-controller/client'
 import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import {
+  CDP_PORT_PATH,
   DEPS_PATH,
   NOVNC_ENTRY_PATH,
   NO_TARGET,
@@ -105,11 +106,80 @@ interface DepsPayload {
   readonly missing?: readonly string[]
 }
 
+/** Which browser to follow: scan this host, switch ports in one click. */
+function CdpSection({ onChanged }: { onChanged: () => void }): React.ReactElement {
+  const [data, setData] = useState<{ port?: number; discovered?: { port: number; browser: string }[] } | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch(CDP_PORT_PATH, { headers: { accept: 'application/json' } })
+      if (res.ok) setData((await res.json()) as typeof data)
+    } catch {
+      /* offline: parent reports it */
+    }
+  }, [])
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  const switchTo = useCallback(
+    async (port: number) => {
+      setBusy(true)
+      try {
+        await fetch(CDP_PORT_PATH, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ port }),
+        })
+        await load()
+        onChanged()
+      } finally {
+        setBusy(false)
+      }
+    },
+    [load, onChanged],
+  )
+
+  const current = data?.port
+  const discovered = data?.discovered ?? []
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div style={{ opacity: 0.75 }}>浏览器调试端口（CDP）：当前 {current ?? '—'}</div>
+      {discovered.length === 0 ? (
+        <div style={{ opacity: 0.6, marginTop: 4 }}>未在插件配置的端口范围内发现浏览器</div>
+      ) : (
+        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 4 }}>
+          {discovered.map((endpoint) => (
+            <button
+              key={endpoint.port}
+              type="button"
+              style={chipStyle(endpoint.port === current)}
+              disabled={busy}
+              title={endpoint.browser}
+              onClick={() => void switchTo(endpoint.port)}
+            >
+              {endpoint.port}
+              {endpoint.port === current ? ' · 当前' : ''}
+            </button>
+          ))}
+        </div>
+      )}
+      <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+        <button type="button" style={chipStyle(false)} disabled={busy} onClick={() => void load()}>
+          重新扫描
+        </button>
+      </div>
+    </div>
+  )
+}
+
 /**
  * First-entry checklist: the window shows what is installed, what is missing,
  * and installs a row on demand. Package installation is always user-triggered.
  */
-function EnvPanel(): React.ReactElement {
+function EnvPanel({ onRefresh }: { onRefresh: () => void }): React.ReactElement {
   const [env, setEnv] = useState<DepsPayload | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [note, setNote] = useState<string | null>(null)
@@ -195,6 +265,7 @@ function EnvPanel(): React.ReactElement {
           重新检测
         </button>
       </div>
+      <CdpSection onChanged={onRefresh} />
       {env?.platform !== undefined ? (
         <div style={{ marginTop: 8, opacity: 0.6, fontSize: 11 }}>
           {env.platform} · {env.manager} · {env.root === true ? 'root 直接安装' : 'sudo -n 安装（需免密 sudo）'}
@@ -392,35 +463,30 @@ function BrowserPreviewWindow(): React.ReactElement {
   const panelRef = useRef<HTMLDivElement | null>(null)
   const dragRef = useRef<{ dx: number; dy: number } | null>(null)
 
-  useEffect(() => {
-    let cancelled = false
-    const poll = async (): Promise<void> => {
-      try {
-        const res = await fetch(STATUS_PATH, { headers: { accept: 'application/json' } })
-        // Surface why: 404 means the host half never registered its routes
-        // (plugin not active / DSH too old), 403 means a stale tab.
-        if (!res.ok) {
-          throw new Error(
-            res.status === 404
-              ? '插件后端未注册路由（HTTP 404）：确认插件已在 DSH 中激活'
-              : `插件未响应（HTTP ${res.status}）`,
-          )
-        }
-        const data = (await res.json()) as PreviewStatus
-        if (cancelled) return
-        setSnapshot(data)
-        setOffline(null)
-      } catch (error) {
-        if (!cancelled) setOffline(error instanceof Error ? error.message : '插件未连接')
+  const poll = useCallback(async (): Promise<void> => {
+    try {
+      const res = await fetch(STATUS_PATH, { headers: { accept: 'application/json' } })
+      // Surface why: 404 means the host half never registered its routes
+      // (plugin not active / DSH too old), 403 means a stale tab.
+      if (!res.ok) {
+        throw new Error(
+          res.status === 404
+            ? '插件后端未注册路由（HTTP 404）：确认插件已在 DSH 中激活'
+            : `插件未响应（HTTP ${res.status}）`,
+        )
       }
-    }
-    void poll()
-    const timer = window.setInterval(() => void poll(), POLL_MS)
-    return () => {
-      cancelled = true
-      window.clearInterval(timer)
+      setSnapshot((await res.json()) as PreviewStatus)
+      setOffline(null)
+    } catch (error) {
+      setOffline(error instanceof Error ? error.message : '插件未连接')
     }
   }, [])
+
+  useEffect(() => {
+    void poll()
+    const timer = window.setInterval(() => void poll(), POLL_MS)
+    return () => window.clearInterval(timer)
+  }, [poll])
 
   /** Pin the preview to one of the pages an Agent session opened. */
   const selectTarget = useCallback(async (id: string | null) => {
@@ -605,7 +671,7 @@ function BrowserPreviewWindow(): React.ReactElement {
           </div>
           {showEnv ? (
             // First entry (and the `环境` tab): the checklist, not a bare error.
-            <EnvPanel />
+            <EnvPanel onRefresh={poll} />
           ) : snapshot?.selected === NO_TARGET ? (
             <div style={styles.ghost}>
               <div>

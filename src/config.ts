@@ -1,6 +1,9 @@
 import z from '@deepseek-ai/schemastery'
 
 /** Plugin-facing configuration; projected onto the auto-generated settings form. */
+/** Default profile directory; a second instance on another port needs its own. */
+export const DEFAULT_USER_DATA_DIR = '/tmp/dsh-agent-chrome'
+
 export interface Config {
   readonly headless: boolean
   /** Serve the picture over VNC (noVNC + websockify) instead of CDP frames. */
@@ -19,6 +22,8 @@ export interface Config {
   readonly vncPort: number
   readonly novncPort: number
   readonly cdpPort: number
+  /** Port range scanned to find browsers already running on this host. */
+  readonly discoveryPorts: string
   readonly screenWidth: number
   readonly screenHeight: number
   readonly startTimeoutMs: number
@@ -48,13 +53,14 @@ export const Config: z<Config> = z.object({
   chromiumArgs: z
     .array(z.string())
     .default(['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--start-maximized']),
-  userDataDir: z.string().default('/tmp/dsh-agent-chrome'),
+  userDataDir: z.string().default(DEFAULT_USER_DATA_DIR),
   x11vncBin: z.string().default('x11vnc'),
   websockifyBin: z.string().default('websockify'),
   novncWebRoot: z.string().default('/usr/share/novnc'),
   vncPort: z.number().default(5900),
   novncPort: z.number().default(6080),
   cdpPort: z.number().default(9222),
+  discoveryPorts: z.string().default('9222-9333'),
   screenWidth: z.number().default(1600),
   screenHeight: z.number().default(900),
   startTimeoutMs: z.number().default(20_000),

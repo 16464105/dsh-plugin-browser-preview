@@ -4,7 +4,7 @@ import { constants as fsConstants } from 'node:fs'
 import { access, mkdir } from 'node:fs/promises'
 import { connect, type Socket } from 'node:net'
 import { join } from 'node:path'
-import type { Config } from './config.ts'
+import { DEFAULT_USER_DATA_DIR, type Config } from './config.ts'
 import { STACK_PROC_ORDER, type StackPhase, type StackProcName, type StackSnapshot } from './shared.ts'
 
 const CHROMIUM_CANDIDATES = ['chromium', 'chromium-browser', 'google-chrome', 'google-chrome-stable']
@@ -88,7 +88,16 @@ export class BrowserStack {
   private stopping = false
   private chromiumBinResolved: string | undefined
 
-  constructor(private readonly ctx: Context, private readonly config: Config) {}
+  constructor(private readonly ctx: Context, private config: Config) {}
+
+  /** Point the stack at another CDP port (runtime switch from the UI). */
+  setCdpPort(port: number): void {
+    this.config = { ...this.config, cdpPort: port }
+  }
+
+  get cdpPort(): number {
+    return this.config.cdpPort
+  }
 
   get snapshot(): StackSnapshot {
     const ready = this.phase === 'ready' || this.phase === 'degraded'
@@ -248,14 +257,21 @@ export class BrowserStack {
     }
     const bin = await this.resolveChromium()
     if (bin === undefined) throw new Error('未找到 Chromium/Chrome 可执行文件（请配置 chromiumBin）')
-    await mkdir(this.config.userDataDir, { recursive: true })
+    // A browser already running on the default port holds the default profile
+    // directory; a second instance on another port needs its own, or it exits
+    // immediately with "profile in use".
+    const dataDir =
+      this.config.userDataDir === DEFAULT_USER_DATA_DIR && this.config.cdpPort !== 9222
+        ? `${this.config.userDataDir}-${this.config.cdpPort}`
+        : this.config.userDataDir
+    await mkdir(dataDir, { recursive: true })
     await this.spawn(
       'chromium',
       bin,
       [
         ...(this.config.headless ? ['--headless=new'] : []),
         `--remote-debugging-port=${this.config.cdpPort}`,
-        `--user-data-dir=${this.config.userDataDir}`,
+        `--user-data-dir=${dataDir}`,
         `--window-size=${this.config.screenWidth},${this.config.screenHeight}`,
         ...this.config.chromiumArgs,
         'about:blank',

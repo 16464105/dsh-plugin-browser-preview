@@ -13,6 +13,7 @@ import type {} from '@deepseek-ai/dsh-tools'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Duplex } from 'node:stream'
 import {
+  CDP_PORT_PATH,
   DEPS_PATH,
   NOVNC_UPSTREAM_WS_PATH,
   NO_TARGET,
@@ -26,6 +27,7 @@ import {
 import { Config } from './config.ts'
 import { BrowserStack } from './stack.ts'
 import { hasCjkFont, installDeps, platformInfo, probeEnvironment, type DepName } from './deps.ts'
+import { parseRange, scanCdpPorts } from './discovery.ts'
 import { ScreencastBridge } from './cdp.ts'
 import { proxyHttpRequest, proxyWebSocket } from './proxy.ts'
 import { acceptWebSocket, readTextFrames, sendBinary } from './ws.ts'
@@ -218,7 +220,14 @@ export function apply(ctx: Context, config: Config): void {
 
   // Say it out loud when the Web carrier is missing: the client half still
   // loads, so the symptom is a window that answers 404 on every route.
-  if ((ctx as { webServer?: unknown }).webServer === undefined) {
+  // Cordis throws on an uninjected service read, hence the guard.
+  let hasWebServer = false
+  try {
+    hasWebServer = (ctx as unknown as { webServer?: unknown }).webServer !== undefined
+  } catch {
+    hasWebServer = false
+  }
+  if (!hasWebServer) {
     logger.warn('browser-preview: ctx.webServer 不可用（DSH 版本过低，或 profile 没有 Web 服务），HTTP 路由不会注册')
   }
 
@@ -296,6 +305,43 @@ export function apply(ctx: Context, config: Config): void {
               },
             }),
           `browser-preview: ${TARGET_PATH}`,
+        )
+
+        web.effect(
+          () =>
+            web.webServer.register({
+              kind: 'exact',
+              path: CDP_PORT_PATH,
+              handler: async (req: IncomingMessage, res: ServerResponse) => {
+                if (req.method === 'GET') {
+                  const [from, to] = parseRange(config.discoveryPorts)
+                  sendJson(res, 200, { port: stack.cdpPort, discovered: await scanCdpPorts(from, to) })
+                  return
+                }
+                if (req.method !== 'POST') {
+                  sendJson(res, 405, { error: 'GET 扫描端口，POST { port } 切换' })
+                  return
+                }
+                const body = await readJsonBody(req)
+                const nextPort = Number(body?.port)
+                if (!Number.isInteger(nextPort) || nextPort < 1 || nextPort > 65_535) {
+                  sendJson(res, 400, { error: 'port 必须是 1-65535 的整数' })
+                  return
+                }
+                // Retire only what this plugin started, then follow the new
+                // port: reuse the browser already there, or start one.
+                await stack.stop({ keepBrowser: false })
+                stack.setCdpPort(nextPort)
+                bridge?.setPort(nextPort)
+                await stack.start()
+                sendJson(res, 200, {
+                  port: nextPort,
+                  ready: stack.snapshot.ready,
+                  missing: stack.snapshot.missing,
+                })
+              },
+            }),
+          `browser-preview: ${CDP_PORT_PATH}`,
         )
 
         web.effect(

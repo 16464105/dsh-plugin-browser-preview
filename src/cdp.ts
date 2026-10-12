@@ -67,7 +67,7 @@ export class ScreencastBridge {
 
   constructor(
     private readonly ctx: Context,
-    private readonly port: number,
+    private port: number,
     private readonly fps: number,
     private readonly quality: number,
     private readonly onFrame: FrameSink,
@@ -94,6 +94,18 @@ export class ScreencastBridge {
       selected: this.selected ?? null,
       lastError: this.lastError ?? null,
     }
+  }
+
+  /** Runtime switch to another browser on another DevTools port. */
+  setPort(port: number): void {
+    this.port = port
+    // Everything cached belongs to the previous browser.
+    this.selected = undefined
+    this.lastFrame = undefined
+    this.lastTargets = []
+    this.socket?.close()
+    this.socket = undefined
+    if (!this.closed) void this.retarget()
   }
 
   /** Every page open in the shared browser, for the preview tab strip. */

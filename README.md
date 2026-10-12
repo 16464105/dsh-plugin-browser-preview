@@ -138,6 +138,7 @@ Debian/Ubuntu：`apt install -y xvfb chromium x11vnc novnc websockify fonts-noto
 | `screencastQuality` | `70` | JPEG 质量 |
 | `chromiumBin` | `auto` | `auto` 依次探测 chromium/chromium-browser/google-chrome/google-chrome-stable |
 | `cdpPort` / `vncPort` / `novncPort` | `9222` / `5900` / `6080` | 端口 |
+| `discoveryPorts` | `9222-9333` | 扫描范围，用来发现本机上其它 Chrome 的调试端口 |
 | `xvfbDisplay` / `screenWidth` / `screenHeight` | `:99` / `1600` / `900` | VNC 模式用 |
 | `userDataDir` | `/tmp/dsh-agent-chrome` | 浏览器 profile 目录 |
 | `startTimeoutMs` | `20000` | 单步启动超时 |
@@ -155,6 +156,8 @@ Debian/Ubuntu：`apt install -y xvfb chromium x11vnc novnc websockify fonts-noto
 | `WS /browser-preview/stream` | 二进制 JPEG 帧下行；上行文本 JSON 回传鼠标/滚轮/键盘 |
 | `GET /browser-preview/api/deps` | 依赖探测：发行版、包管理器、是否 root、缺少哪些、将要安装哪些 |
 | `POST /browser-preview/api/deps` | 按 `{"deps":[...]}` 安装依赖（省略则装所有缺失项），返回安装结果 |
+| `GET /browser-preview/api/cdp-port` | 扫描本机 Chrome 调试端口，返回当前端口与发现的实例 |
+| `POST /browser-preview/api/cdp-port` | 切换跟随的浏览器：`{"port":35569}` |
 | `GET /browser-preview/api/target` | 当前所有页面 + 固定的目标 |
 | `POST /browser-preview/api/target` | 按页面固定（`{id}`）、按会话切换（`{session}`）或恢复跟随最新（`{id: null}`） |
 | `GET /browser-preview/view` | 独立全屏预览页（悬浮窗 ↗ 打开；screencast 模式自带查看器，`vnc` 模式 302 到 noVNC） |
@@ -221,6 +224,17 @@ curl -X POST http://127.0.0.1:3080/mcp-manager/api/servers -H 'content-type: app
 - CDP 端口用 `DSH_BROWSER_CDP_PORT` 覆盖（默认 `9222`），必须和插件的 `cdpPort` 一致。
 - `screenshot` 返回的是 MCP 图片块：DSH 会按模型能力转成 attachment 或降级成文本占位符。
 - 若开启了 MCP 管理器的「按需模式」，Agent 只看到 `mcp_search_tools` / `mcp_describe_tool` / `mcp_execute_tool`，用它们间接调用即可。
+
+## 该跟哪个浏览器？（端口不用猜）
+
+插件只跟随**一个** CDP 端口（默认 `9222`）。Agent 有时会自己起一个 Chrome（脚本里写死端口，比如 `35569`），那时预览就是黑的 —— 因为看的不是同一个实例。
+
+两种做法：
+
+1. **在界面里切**（推荐）：预览窗口 →「环境」→ 底部「浏览器调试端口（CDP）」，插件会扫描 `discoveryPorts` 范围（默认 `9222-9333`）列出本机所有 Chrome，点端口即可切换；目标端口上没有浏览器时，插件会用独立 profile 目录起一个。
+2. **改配置**：设置页里改 `cdpPort`（也可以用 `POST /browser-preview/api/cdp-port` 运行时切换）。
+
+> 切换只会回收**本插件启动**的浏览器；别人进程起的实例杀不掉（没有句柄），需要那边自己关掉。
 
 ## 新机器装完是 404 怎么排查
 

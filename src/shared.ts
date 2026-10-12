@@ -32,6 +32,9 @@ export const TARGET_PATH = `${ROUTE_PREFIX}/api/target`
 /** Dependency probe (GET) and opt-in installation (POST). */
 export const DEPS_PATH = `${ROUTE_PREFIX}/api/deps`
 
+/** Scan browsers on this host (GET) and switch the CDP port (POST { port }). */
+export const CDP_PORT_PATH = `${ROUTE_PREFIX}/api/cdp-port`
+
 /**
  * "Show nothing": the selected conversation has not opened a page yet. The
  * preview must be blank rather than keep the previous conversation's picture.
