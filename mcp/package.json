@@ -1,0 +1,19 @@
+{
+  "name": "dsh-browser-mcp",
+  "version": "0.1.0",
+  "description": "MCP server exposing the shared DSH browser (CDP) to the Agent: open, click, type, screenshot",
+  "type": "module",
+  "main": "src/index.js",
+  "bin": {
+    "dsh-browser-mcp": "src/index.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "files": [
+    "src"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  }
+}

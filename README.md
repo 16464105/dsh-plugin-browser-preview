@@ -79,6 +79,46 @@ Debian/Ubuntu：`apt install -y xvfb chromium x11vnc novnc websockify`。
 
 Agent 侧直接连 `ws://127.0.0.1:9222/devtools/browser/<id>`（或 `/json/list` 里的页面地址）。
 
+## 给 Agent 的浏览器工具（MCP）
+
+没有工具，Agent 只会说"我没有浏览器能力"然后退回 HTTP 抓取。配套 `mcp/` 目录是一个独立 MCP server（stdio，底层就是这个浏览器实例的 CDP），注册后 Agent 直接多出一组浏览器工具：
+
+| 工具（前缀 `mcp__browser__`） | 作用 |
+| --- | --- |
+| `status` | 当前页面 URL / 标题 / CDP 端口 |
+| `open(url)` | 打开页面（复用同一标签页，预览窗口同步） |
+| `screenshot()` | 截当前页面，返回 JPEG 图片块 |
+| `text(limit)` | 读正文 innerText |
+| `click(selector \| x,y)` | 点击元素 |
+| `type(text, selector?, pressEnter?)` | 输入文本 |
+| `scroll(dy)` | 滚动 |
+| `back()` | 后退 |
+| `eval(expression)` | 执行 JS（调试用） |
+
+注册步骤：
+
+```bash
+cd mcp && npm install
+```
+
+然后在 **设置 → MCP → ＋ 添加 MCP 服务器 → stdio**：名称 `browser`（决定 `mcp__browser__*` 前缀）、命令 `node`、参数 `/data/workspace/dsh-plugin-browser-preview/mcp/src/index.js`、工作目录同上。保存即连接，状态徽章显示「已连接 (9 个工具)」。
+
+等价的 API 方式（脚本化部署用）：
+
+```bash
+curl -X POST http://127.0.0.1:3080/mcp-manager/api/servers -H 'content-type: application/json' \
+  -d '{"name":"browser","type":"stdio","command":"node",
+       "args":["/data/workspace/dsh-plugin-browser-preview/mcp/src/index.js"],
+       "cwd":"/data/workspace/dsh-plugin-browser-preview/mcp"}'
+```
+
+注意点：
+
+- 工具在**新会话**里才可见（已有会话的工具视图是启动时快照）。
+- CDP 端口用 `DSH_BROWSER_CDP_PORT` 覆盖（默认 `9222`），必须和插件的 `cdpPort` 一致。
+- `screenshot` 返回的是 MCP 图片块：DSH 会按模型能力转成 attachment 或降级成文本占位符。
+- 若开启了 MCP 管理器的「按需模式」，Agent 只看到 `mcp_search_tools` / `mcp_describe_tool` / `mcp_execute_tool`，用它们间接调用即可。
+
 ## 实现要点
 
 - **进程托管**：Xvfb → Chromium → x11vnc → websockify 顺序拉起，每一步都先探测端口/socket，已存在则复用（不抢别人的实例）；所有子进程 `detached` 成组，退出时按逆序 `SIGTERM` → 3s → `SIGKILL` 整组回收，`ctx.effect` 保证 dispose 时清理。
