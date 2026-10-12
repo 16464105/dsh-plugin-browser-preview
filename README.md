@@ -94,13 +94,7 @@ dsh plugin --profile web add /绝对路径/dsh-plugin-browser-preview
 
 > 改了 `src/` 之后记得 `node build.mjs` 并把 `lib/` 一起提交，远端用户才能拿到新代码。本地 `link:` 安装则只需重新构建 + 重启。
 
-**MCP 工具（可选）**：Agent 侧的 9 个浏览器工具由 `mcp/` 提供，它自己依赖 `@modelcontextprotocol/sdk`，git 安装不会带进来，需要执行一次：
-
-```bash
-cd /root/.dsh/profiles/web/node_modules/dsh-plugin-browser-preview/mcp && npm install
-```
-
-只用预览窗口、不需要 Agent 工具的话可以跳过。
+**MCP 工具**：Agent 侧的 9 个浏览器工具由 `mcp/` 提供，它是**零依赖**的（自己实现了 MCP 的 stdio JSON-RPC），命令就是 `node <插件目录>/mcp/src/index.js`，git 装完即可用，不需要再 `npm install`。
 
 `dsh plugin add` 会把包名写进 profile 的 `dsh.profile.bundles`；本地目录装成 `link:`，改完代码 `node build.mjs` + 重启即可生效，不用重新 add。
 
@@ -163,7 +157,7 @@ Agent 侧直接连 `ws://127.0.0.1:9222/devtools/browser/<id>`（或 `/json/list
 
 ## 给 Agent 的浏览器工具（MCP）
 
-没有工具，Agent 只会说"我没有浏览器能力"然后退回 HTTP 抓取。配套 `mcp/` 目录是一个独立 MCP server（stdio，底层就是这个浏览器实例的 CDP），注册后 Agent 直接多出一组浏览器工具：
+没有工具，Agent 只会说"我没有浏览器能力"然后退回 HTTP 抓取。配套 `mcp/` 目录是一个独立 MCP server（stdio、**零依赖**，底层就是这个浏览器实例的 CDP），注册后 Agent 直接多出一组浏览器工具：
 
 | 工具（前缀 `mcp__browser__`） | 作用 |
 | --- | --- |
