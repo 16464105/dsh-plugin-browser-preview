@@ -10,7 +10,15 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Duplex } from 'node:stream'
-import { NOVNC_UPSTREAM_WS_PATH, ROUTE_PREFIX, STATUS_PATH, STREAM_PATH, VIEW_PATH, WS_PATH } from './shared.ts'
+import {
+  NOVNC_UPSTREAM_WS_PATH,
+  ROUTE_PREFIX,
+  STATUS_PATH,
+  STREAM_PATH,
+  TARGET_PATH,
+  VIEW_PATH,
+  WS_PATH,
+} from './shared.ts'
 import { Config } from './config.ts'
 import { BrowserStack } from './stack.ts'
 import { ScreencastBridge } from './cdp.ts'
@@ -32,6 +40,22 @@ function sendJson(res: ServerResponse, status: number, payload: unknown): void {
 
 function escapeHtml(value: string): string {
   return value.replace(/[&<>"]/g, (char) => `&#${char.charCodeAt(0)};`)
+}
+
+async function readJsonBody(req: IncomingMessage, limit = 4096): Promise<Record<string, unknown> | null> {
+  const chunks: Buffer[] = []
+  let size = 0
+  for await (const chunk of req) {
+    size += (chunk as Buffer).length
+    if (size > limit) return null
+    chunks.push(chunk as Buffer)
+  }
+  if (chunks.length === 0) return null
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -119,12 +143,40 @@ export function apply(ctx: Context, config: Config): void {
               handler: async (_req: IncomingMessage, res: ServerResponse) => {
                 sendJson(res, 200, {
                   ...stack.snapshot,
+                  targets: bridge?.targets ?? [],
+                  selected: (bridge?.diagnostics?.selected as string | null) ?? null,
                   viewers: viewers.size,
                   stream: bridge?.diagnostics ?? null,
                 })
               },
             }),
           `browser-preview: GET ${STATUS_PATH}`,
+        )
+
+        web.effect(
+          () =>
+            web.webServer.register({
+              kind: 'exact',
+              path: TARGET_PATH,
+              handler: async (req: IncomingMessage, res: ServerResponse) => {
+                if (req.method === 'GET') {
+                  sendJson(res, 200, {
+                    targets: bridge?.targets ?? [],
+                    selected: (bridge?.diagnostics?.selected as string | null) ?? null,
+                  })
+                  return
+                }
+                if (req.method !== 'POST') {
+                  sendJson(res, 405, { error: 'POST { id } expected' })
+                  return
+                }
+                const body = await readJsonBody(req)
+                const id = typeof body?.id === 'string' ? body.id : null
+                bridge?.select(id)
+                sendJson(res, 200, { selected: id })
+              },
+            }),
+          `browser-preview: ${TARGET_PATH}`,
         )
 
         web.effect(

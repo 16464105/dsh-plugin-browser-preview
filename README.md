@@ -68,6 +68,8 @@ Debian/Ubuntu：`apt install -y xvfb chromium x11vnc novnc websockify fonts-noto
 | --- | --- |
 | `GET /browser-preview/api/status` | 状态 + 诊断（进程、缺失二进制、抓帧计数、最后错误） |
 | `WS /browser-preview/stream` | 二进制 JPEG 帧下行；上行文本 JSON 回传鼠标/滚轮/键盘 |
+| `GET /browser-preview/api/target` | 当前所有页面 + 固定的目标 |
+| `POST /browser-preview/api/target` | 固定预览目标（`{id}`）或恢复自动跟随（`{id: null}`） |
 | `GET /browser-preview/view` | 独立全屏预览页（悬浮窗 ↗ 打开；screencast 模式自带查看器，`vnc` 模式 302 到 noVNC） |
 | `WS /browser-preview/ws` | noVNC 到 websockify 的 WebSocket 桥（仅 `vnc` 模式） |
 | `/browser-preview/*` | noVNC 静态资源反代（仅 `vnc` 模式） |
@@ -89,7 +91,7 @@ Agent 侧直接连 `ws://127.0.0.1:9222/devtools/browser/<id>`（或 `/json/list
 | 工具（前缀 `mcp__browser__`） | 作用 |
 | --- | --- |
 | `status` | 当前页面 URL / 标题 / CDP 端口 |
-| `open(url)` | 打开页面（复用同一标签页，预览窗口同步） |
+| `open(url)` | **新开一个标签页**打开（不复用现有页面），返回 `targetId` |
 | `screenshot()` | 截当前页面，返回 JPEG 图片块 |
 | `text(limit)` | 读正文 innerText |
 | `click(selector \| x,y)` | 点击元素 |
@@ -97,6 +99,8 @@ Agent 侧直接连 `ws://127.0.0.1:9222/devtools/browser/<id>`（或 `/json/list
 | `scroll(dy)` | 滚动 |
 | `back()` | 后退 |
 | `eval(expression)` | 执行 JS（调试用） |
+
+**多个会话共用一个浏览器**：`open` 每次都新建标签页并返回 `targetId`，其余工具都支持可选的 `targetId` 参数（不传则作用于最新页面），所以两个会话不会互相导航对方的页面。前端预览窗口顶部有标签栏：`自动跟随` = 跟随最新打开的页面；点某个标签 = 固定预览该页面（固定的标签被关掉后自动回退到跟随）。
 
 注册步骤：
 
@@ -117,7 +121,7 @@ curl -X POST http://127.0.0.1:3080/mcp-manager/api/servers -H 'content-type: app
 
 注意点：
 
-- 工具在**新会话**里才可见（已有会话的工具视图是启动时快照）。
+- 工具**不需要新开会话**：Agent 每一步请求前都会重新组装工具表（`ctx.tools` 注册表 → `systemPrompt.assemble()`），注册完成后下一条消息就能用，已存在的会话也一样。子 Agent 若带 `allow` 白名单则可能被过滤。
 - CDP 端口用 `DSH_BROWSER_CDP_PORT` 覆盖（默认 `9222`），必须和插件的 `cdpPort` 一致。
 - `screenshot` 返回的是 MCP 图片块：DSH 会按模型能力转成 attachment 或降级成文本占位符。
 - 若开启了 MCP 管理器的「按需模式」，Agent 只看到 `mcp_search_tools` / `mcp_describe_tool` / `mcp_execute_tool`，用它们间接调用即可。
@@ -126,7 +130,7 @@ curl -X POST http://127.0.0.1:3080/mcp-manager/api/servers -H 'content-type: app
 
 - **进程托管**：Xvfb → Chromium → x11vnc → websockify 顺序拉起，每一步都先探测端口/socket，已存在则复用（不抢别人的实例）；所有子进程 `detached` 成组，退出时按逆序 `SIGTERM` → 3s → `SIGKILL` 整组回收，`ctx.effect` 保证 dispose 时清理。
 - **抓帧**：`Page.captureScreenshot` 定时抓、逐帧比对去重，只推有变化的帧；新观众连接时立刻补发当前帧。连续 3 次超时判定渲染器卡死，断开重连并重新选页。
-- **选页**：每 4s 读 `/json/list`，优先非 `about:blank` 的最后一个页面 —— Agent 新开的标签页会自动成为预览对象。
+- **选页**：每 4s 读 `/json/list`。固定了目标就用固定目标；没固定则优先非 `about:blank` 的最后一个页面（Agent 新开的标签页自动成为预览对象）。固定的标签被关闭时自动回退到跟随。
 - **反向代理**：noVNC 的 HTTP 走 `node:http` 转发（剥掉 hop-by-hop 与 `accept-encoding`，避免与宿主的 gzip 中间件叠加）；WebSocket 走裸 socket 转发，握手交给 websockify。
 - **自实现 WS 服务端**：`registerUpgrade` 交来的是原始 socket，所以 `src/ws.ts` 里做了 101 握手与帧编解码（含 ping/pong）。
 

@@ -11,9 +11,12 @@ import {
   ROUTE_PREFIX,
   STATUS_PATH,
   STREAM_PATH,
+  TARGET_PATH,
   VIEW_PATH,
   WS_PATH,
+  type PreviewStatus,
   type StackSnapshot,
+  type TargetSummary,
 } from '../shared.ts'
 
 export const inject = ['slots']
@@ -35,7 +38,39 @@ novncUrl.searchParams.set('reconnect_delay', '2000')
 novncUrl.searchParams.set('show_dot', 'true')
 const NOVNC_SRC = `${novncUrl.pathname}${novncUrl.search}`
 
+/** Tab chip: `active` marks the page currently being previewed. */
+function chipStyle(active: boolean): React.CSSProperties {
+  return {
+    border: `1px solid ${active ? '#2563eb' : 'rgba(255,255,255,0.12)'}`,
+    background: active ? 'rgba(37,99,235,0.25)' : 'transparent',
+    color: active ? '#dbeafe' : '#9ca3af',
+    borderRadius: 4,
+    padding: '1px 6px',
+    fontSize: 11,
+    cursor: 'pointer',
+    whiteSpace: 'nowrap',
+    maxWidth: 160,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+  }
+}
+
+function labelOf(target: TargetSummary): string {
+  const text = (target.title || target.url).trim()
+  if (text.length === 0) return '(空白页)'
+  return text.length > 20 ? `${text.slice(0, 20)}…` : text
+}
+
 const styles: Record<string, React.CSSProperties> = {
+  tabs: {
+    display: 'flex',
+    gap: 4,
+    padding: '4px 8px',
+    background: '#1c1c1c',
+    borderBottom: '1px solid rgba(255,255,255,0.08)',
+    overflowX: 'auto',
+    flex: '0 0 auto',
+  },
   launcher: {
     position: 'fixed',
     right: 24,
@@ -182,7 +217,7 @@ function ScreencastView(): React.ReactElement {
 
 function BrowserPreviewWindow(): React.ReactElement {
   const [open, setOpen] = useState(false)
-  const [snapshot, setSnapshot] = useState<StackSnapshot | null>(null)
+  const [snapshot, setSnapshot] = useState<PreviewStatus | null>(null)
   const [offline, setOffline] = useState(false)
   const [position, setPosition] = useState<{ left: number; top: number } | null>(null)
   const panelRef = useRef<HTMLDivElement | null>(null)
@@ -194,7 +229,7 @@ function BrowserPreviewWindow(): React.ReactElement {
       try {
         const res = await fetch(STATUS_PATH, { headers: { accept: 'application/json' } })
         if (!res.ok) throw new Error(`status ${res.status}`)
-        const data = (await res.json()) as StackSnapshot
+        const data = (await res.json()) as PreviewStatus
         if (cancelled) return
         setSnapshot(data)
         setOffline(false)
@@ -207,6 +242,21 @@ function BrowserPreviewWindow(): React.ReactElement {
     return () => {
       cancelled = true
       window.clearInterval(timer)
+    }
+  }, [])
+
+  /** Pin the preview to one of the pages an Agent session opened. */
+  const selectTarget = useCallback(async (id: string | null) => {
+    try {
+      await fetch(TARGET_PATH, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ id }),
+      })
+      const res = await fetch(STATUS_PATH, { headers: { accept: 'application/json' } })
+      if (res.ok) setSnapshot((await res.json()) as PreviewStatus)
+    } catch {
+      /* offline: the next poll picks it up */
     }
   }, [])
 
@@ -302,6 +352,27 @@ function BrowserPreviewWindow(): React.ReactElement {
                 ✕
               </button>
             </span>
+          </div>
+          <div style={styles.tabs}>
+            <button
+              type="button"
+              style={chipStyle((snapshot?.selected ?? null) === null)}
+              title="跟随最新打开的页面"
+              onClick={() => void selectTarget(null)}
+            >
+              自动跟随
+            </button>
+            {(snapshot?.targets ?? []).map((target) => (
+              <button
+                key={target.id}
+                type="button"
+                style={chipStyle(snapshot?.selected === target.id)}
+                title={target.url}
+                onClick={() => void selectTarget(target.id)}
+              >
+                {labelOf(target)}
+              </button>
+            ))}
           </div>
           {!ready ? (
             <div style={styles.ghost}>

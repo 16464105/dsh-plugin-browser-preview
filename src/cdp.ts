@@ -10,6 +10,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import { get } from 'node:http'
+import type { TargetSummary } from './shared.ts'
 
 interface SocketLike {
   readonly readyState: number
@@ -28,10 +29,15 @@ export interface FrameSink {
 
 /** A `/json/list` row — only the fields this client reads. */
 interface CdpTarget {
+  readonly id: string
   readonly type: string
   readonly url: string
+  readonly title?: string
   readonly webSocketDebuggerUrl?: string
 }
+
+/** Re-exported so the host half and this client agree on the tab shape. */
+export type { TargetSummary } from './shared.ts'
 
 interface Pending {
   resolve(value: any): void
@@ -55,6 +61,9 @@ export class ScreencastBridge {
   private lastError: string | undefined
   private timeouts = 0
   private closed = false
+  /** Pinned target id; `undefined` means "follow the newest page". */
+  private selected: string | undefined
+  private lastTargets: TargetSummary[] = []
 
   constructor(
     private readonly ctx: Context,
@@ -82,8 +91,26 @@ export class ScreencastBridge {
       frames: this.frames,
       captured: this.captured,
       target: this.targetUrl ?? null,
+      selected: this.selected ?? null,
       lastError: this.lastError ?? null,
     }
+  }
+
+  /** Every page open in the shared browser, for the preview tab strip. */
+  get targets(): readonly TargetSummary[] {
+    return this.lastTargets
+  }
+
+  /**
+   * Pin the preview to one page. Several Agent sessions share this browser,
+   * so "follow the newest" alone makes the window jump between them.
+   * `null` resumes following.
+   */
+  select(id: string | null): void {
+    this.selected = id ?? undefined
+    this.socket?.close()
+    this.socket = undefined
+    if (!this.closed) void this.retarget()
   }
 
   async start(): Promise<void> {
@@ -117,10 +144,16 @@ export class ScreencastBridge {
       this.lastError = `json/list: ${error instanceof Error ? error.message : String(error)}`
       return
     }
+    this.lastTargets = targets
+      .filter((target) => target.type === 'page')
+      .map((target) => ({ id: target.id, url: target.url, title: target.title ?? target.url }))
+    const pages = targets.filter((target) => target.type === 'page' && target.webSocketDebuggerUrl !== undefined)
+    const pinned = this.selected === undefined ? undefined : pages.find((target) => target.id === this.selected)
+    // The pinned tab was closed — fall back to following.
+    if (this.selected !== undefined && pinned === undefined) this.selected = undefined
     // `/json/list` order is not a creation order, so prefer the newest page
     // that is not the startup `about:blank` — that is the tab an Agent opened.
-    const pages = targets.filter((target) => target.type === 'page' && target.webSocketDebuggerUrl !== undefined)
-    const page = [...pages].reverse().find((target) => target.url !== 'about:blank') ?? pages[pages.length - 1]
+    const page = pinned ?? [...pages].reverse().find((target) => target.url !== 'about:blank') ?? pages[pages.length - 1]
     if (page?.webSocketDebuggerUrl === undefined) return
     if (page.webSocketDebuggerUrl === this.targetUrl && this.connected) return
     this.targetUrl = page.webSocketDebuggerUrl

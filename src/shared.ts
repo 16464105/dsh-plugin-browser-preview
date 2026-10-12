@@ -26,6 +26,16 @@ export const NOVNC_UPSTREAM_WS_PATH = '/websockify'
 /** noVNC entry document, with the WebSocket path pinned to {@link WS_PATH}. */
 export const NOVNC_ENTRY_PATH = `${ROUTE_PREFIX}/vnc.html`
 
+/** Pin the preview to one page: POST { id } or POST { id: null } to follow. */
+export const TARGET_PATH = `${ROUTE_PREFIX}/api/target`
+
+/** One open page in the shared browser, shown as a tab in the preview. */
+export interface TargetSummary {
+  readonly id: string
+  readonly url: string
+  readonly title: string
+}
+
 export type StackPhase = 'stopped' | 'starting' | 'ready' | 'degraded' | 'error'
 
 /** Process names in startup order; teardown walks the reverse. */
@@ -53,4 +63,14 @@ export interface StackSnapshot {
   readonly screencast: boolean
   readonly vnc: boolean
   readonly message: string | undefined
+}
+
+/** What {@link STATUS_PATH} actually returns: stack state plus preview state. */
+export interface PreviewStatus extends StackSnapshot {
+  /** Pages open in the shared browser; several sessions share one instance. */
+  readonly targets: readonly TargetSummary[]
+  /** Pinned target id, or null while following the newest page. */
+  readonly selected: string | null
+  readonly viewers: number
+  readonly stream: Record<string, unknown> | null
 }
