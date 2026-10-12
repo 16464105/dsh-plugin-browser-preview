@@ -54,6 +54,23 @@ apt install -y xvfb x11vnc novnc websockify
 curl -s http://127.0.0.1:3080/browser-preview/api/status | head -c 400
 ```
 
+### 依赖检测与（可选）自动安装
+
+插件启动时会检测浏览器、中文字体（vnc 模式还会检测 Xvfb / x11vnc / novnc / websockify），缺失项会显示在预览窗口里，也可以查：
+
+```bash
+curl -s http://127.0.0.1:3080/browser-preview/api/deps
+# {"platform":"tencentos/rhel/fedora","manager":"dnf","root":true,"missing":[],"deps":[]}
+```
+
+**安装系统包默认是关的**（这类操作涉及 root 与网络，不该偷偷做），三种显式触发方式：
+
+1. 预览窗口里点「一键安装（dnf/apt）」
+2. 调接口：`curl -X POST http://127.0.0.1:3080/browser-preview/api/deps -d '{}'`（`{"deps":["chromium"]}` 可只装某一项）
+3. 配置 `autoInstall: 'on-start'`，插件启动时自动补齐
+
+约束：包名按发行版白名单（dnf / apt），命令以 argv 数组执行（不经 shell），root 直接装、非 root 走 `sudo -n`（需免密 sudo），每条命令有超时，失败原因写进返回值的 `log`；中文字体装完会执行 `fc-cache -f`。Chromium 在 TencentOS 仓库里没有，会自动回退到 Google 的 RPM。
+
 ## 安装
 
 ```bash
@@ -95,6 +112,8 @@ Debian/Ubuntu：`apt install -y xvfb chromium x11vnc novnc websockify fonts-noto
 | `userDataDir` | `/tmp/dsh-agent-chrome` | 浏览器 profile 目录 |
 | `startTimeoutMs` | `20000` | 单步启动超时 |
 | `autoStart` | `true` | 插件加载即拉起浏览器栈 |
+| `autoInstall` | `off` | `on-start` = 启动时自动安装缺失的系统包（需 root 或免密 sudo）；`off` = 只报告不动手 |
+| `installTimeoutMs` | `600000` | 单条安装命令的超时 |
 | `keepBrowser` | `true` | 插件重载/DSH 重启时**保留**正在运行的 Chromium（标签和 Agent 手里的 `targetId` 才不会失效），下次启动自动复用；设为 `false` 则一起回收 |
 | `verbose` | `false` | 子进程输出全量转发到宿主日志 |
 
@@ -104,6 +123,8 @@ Debian/Ubuntu：`apt install -y xvfb chromium x11vnc novnc websockify fonts-noto
 | --- | --- |
 | `GET /browser-preview/api/status` | 状态 + 诊断（进程、缺失二进制、抓帧计数、最后错误） |
 | `WS /browser-preview/stream` | 二进制 JPEG 帧下行；上行文本 JSON 回传鼠标/滚轮/键盘 |
+| `GET /browser-preview/api/deps` | 依赖探测：发行版、包管理器、是否 root、缺少哪些、将要安装哪些 |
+| `POST /browser-preview/api/deps` | 按 `{"deps":[...]}` 安装依赖（省略则装所有缺失项），返回安装结果 |
 | `GET /browser-preview/api/target` | 当前所有页面 + 固定的目标 |
 | `POST /browser-preview/api/target` | 按页面固定（`{id}`）、按会话切换（`{session}`）或恢复跟随最新（`{id: null}`） |
 | `GET /browser-preview/view` | 独立全屏预览页（悬浮窗 ↗ 打开；screencast 模式自带查看器，`vnc` 模式 302 到 noVNC） |

@@ -29,6 +29,9 @@ export const NOVNC_ENTRY_PATH = `${ROUTE_PREFIX}/vnc.html`
 /** Pin the preview to one page: POST { id } or POST { id: null } to follow. */
 export const TARGET_PATH = `${ROUTE_PREFIX}/api/target`
 
+/** Dependency probe (GET) and opt-in installation (POST). */
+export const DEPS_PATH = `${ROUTE_PREFIX}/api/deps`
+
 /**
  * "Show nothing": the selected conversation has not opened a page yet. The
  * preview must be blank rather than keep the previous conversation's picture.
@@ -87,4 +90,6 @@ export interface PreviewStatus extends StackSnapshot {
   readonly selected: string | null
   readonly viewers: number
   readonly stream: Record<string, unknown> | null
+  /** Distro/package-manager detection behind the one-click dependency install. */
+  readonly platform: { readonly platform: string; readonly manager: string; readonly root: boolean } | null
 }

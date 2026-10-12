@@ -10,6 +10,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import type {} from '@deepseek-ai/dsh-api-session-controller/client'
 import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import {
+  DEPS_PATH,
   NOVNC_ENTRY_PATH,
   NO_TARGET,
   ROUTE_PREFIX,
@@ -351,6 +352,39 @@ function BrowserPreviewWindow(): React.ReactElement {
     void selectSession(current.id)
   }, [follow, current?.id, snapshot?.selected, snapshot?.sessions, selectSession])
 
+  /** Opt-in dependency install: OS packages are never installed unasked. */
+  const [installing, setInstalling] = useState(false)
+  const [installNote, setInstallNote] = useState<string | null>(null)
+
+  const runInstall = useCallback(async () => {
+    setInstalling(true)
+    setInstallNote(null)
+    try {
+      const res = await fetch(DEPS_PATH, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      })
+      const report = (await res.json()) as {
+        installed?: string[]
+        failed?: string[]
+        log?: string[]
+        error?: string
+      }
+      if (typeof report.error === 'string') {
+        setInstallNote(report.error)
+        return
+      }
+      const done = report.installed?.join('、') ?? '无'
+      const failed = report.failed?.length ? `；失败：${report.failed?.join('、')}` : ''
+      setInstallNote(`已安装 ${done}${failed}`)
+    } catch {
+      setInstallNote('安装请求失败，请查看 DSH 日志')
+    } finally {
+      setInstalling(false)
+    }
+  }, [])
+
   const ready = snapshot?.ready === true
   const [reloadKey, setReloadKey] = useState(0)
   // VNC mode has a real noVNC page; screencast mode gets the plugin's own viewer.
@@ -445,7 +479,27 @@ function BrowserPreviewWindow(): React.ReactElement {
                   <div style={{ marginTop: 8 }}>
                     缺少：{snapshot.missing.join('、')}
                     <br />
-                    <code>apt install -y xvfb chromium x11vnc novnc websockify</code>
+                    <code>
+                      {snapshot.platform?.manager === 'apt'
+                        ? 'apt install -y xvfb chromium x11vnc novnc websockify'
+                        : 'dnf install -y xorg-x11-server-Xvfb chromium x11vnc novnc python3-websockify'}
+                    </code>
+                    {snapshot.platform !== null && snapshot.platform !== undefined ? (
+                      <div style={{ marginTop: 8 }}>
+                        <button
+                          type="button"
+                          style={{ ...chipStyle(false), padding: '3px 10px', fontSize: 12 }}
+                          disabled={installing}
+                          onClick={() => void runInstall()}
+                        >
+                          {installing ? '安装中…' : `一键安装（${snapshot.platform.manager}）`}
+                        </button>
+                        <div style={{ marginTop: 4, opacity: 0.7 }}>
+                          {snapshot.platform.root ? '以 root 直接安装' : '将通过 sudo -n 安装（需免密 sudo）'}
+                        </div>
+                      </div>
+                    ) : null}
+                    {installNote !== null ? <div style={{ marginTop: 6 }}>{installNote}</div> : null}
                   </div>
                 ) : null}
               </div>

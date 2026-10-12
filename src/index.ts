@@ -13,6 +13,7 @@ import type {} from '@deepseek-ai/dsh-tools'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Duplex } from 'node:stream'
 import {
+  DEPS_PATH,
   NOVNC_UPSTREAM_WS_PATH,
   NO_TARGET,
   ROUTE_PREFIX,
@@ -24,6 +25,7 @@ import {
 } from './shared.ts'
 import { Config } from './config.ts'
 import { BrowserStack } from './stack.ts'
+import { hasCjkFont, installDeps, platformInfo, type DepName } from './deps.ts'
 import { ScreencastBridge } from './cdp.ts'
 import { proxyHttpRequest, proxyWebSocket } from './proxy.ts'
 import { acceptWebSocket, readTextFrames, sendBinary } from './ws.ts'
@@ -31,6 +33,24 @@ import { acceptWebSocket, readTextFrames, sendBinary } from './ws.ts'
 export const name = 'browser-preview'
 
 export { Config }
+
+const DEP_OF: Record<string, DepName> = {
+  Xvfb: 'Xvfb',
+  chromium: 'chromium',
+  x11vnc: 'x11vnc',
+  websockify: 'websockify',
+}
+
+/** Missing binaries plus a CJK font when the system has none. */
+async function neededDeps(missing: readonly string[]): Promise<DepName[]> {
+  const deps: DepName[] = []
+  for (const name of missing) {
+    const dep = DEP_OF[name]
+    if (dep !== undefined) deps.push(dep)
+  }
+  if (!(await hasCjkFont())) deps.push('fonts')
+  return deps
+}
 
 function sendJson(res: ServerResponse, status: number, payload: unknown): void {
   const body = JSON.stringify(payload)
@@ -223,6 +243,7 @@ export function apply(ctx: Context, config: Config): void {
                   selected: (bridge?.diagnostics?.selected as string | null) ?? null,
                   viewers: viewers.size,
                   stream: bridge?.diagnostics ?? null,
+                  platform: platformInfo(),
                   diagnostics: { lastToolEvent, lastTargetRequest },
                 })
               },
@@ -267,6 +288,46 @@ export function apply(ctx: Context, config: Config): void {
               },
             }),
           `browser-preview: ${TARGET_PATH}`,
+        )
+
+        web.effect(
+          () =>
+            web.webServer.register({
+              kind: 'exact',
+              path: DEPS_PATH,
+              handler: async (req: IncomingMessage, res: ServerResponse) => {
+                if (req.method === 'GET') {
+                  const missing = stack.snapshot.missing
+                  sendJson(res, 200, {
+                    ...platformInfo(),
+                    missing,
+                    deps: await neededDeps(missing),
+                  })
+                  return
+                }
+                if (req.method !== 'POST') {
+                  sendJson(res, 405, { error: 'GET 探测依赖，POST 安装依赖' })
+                  return
+                }
+                if (installing) {
+                  sendJson(res, 409, { error: '安装进行中' })
+                  return
+                }
+                const body = await readJsonBody(req)
+                const requested = Array.isArray(body?.deps)
+                  ? (body.deps.filter((dep): dep is string => typeof dep === 'string') as DepName[])
+                  : await neededDeps(stack.snapshot.missing)
+                installing = true
+                try {
+                  const report = await installDeps(requested, config.installTimeoutMs)
+                  await stack.start()
+                  sendJson(res, 200, { ...report, ready: stack.snapshot.ready })
+                } finally {
+                  installing = false
+                }
+              },
+            }),
+          `browser-preview: ${DEPS_PATH}`,
         )
 
         web.effect(
@@ -359,13 +420,30 @@ export function apply(ctx: Context, config: Config): void {
     'browser-preview: webServer routes',
   )
 
+  let installing = false
+
+  /** Start, optionally install what is missing, then start again. */
+  const boot = async (): Promise<void> => {
+    await stack.start()
+    if (config.autoInstall === 'on-start' && stack.snapshot.missing.length > 0) {
+      installing = true
+      try {
+        const report = await installDeps(await neededDeps(stack.snapshot.missing), config.installTimeoutMs)
+        logger.info(
+          `browser-preview: 自动安装完成（成功 ${report.installed.join(',') || '无'}；失败 ${report.failed.join(',') || '无'}）`,
+        )
+      } finally {
+        installing = false
+      }
+      await stack.start()
+    }
+    await bridge?.start()
+  }
+
   if (config.autoStart) {
-    void stack
-      .start()
-      .then(() => bridge?.start())
-      .catch((error: unknown) => {
-        logger.warn(error instanceof Error ? error : new Error(String(error)))
-      })
+    void boot().catch((error: unknown) => {
+      logger.warn(error instanceof Error ? error : new Error(String(error)))
+    })
   }
 
   ctx.logger.info(`browser-preview: routes mounted at ${ROUTE_PREFIX} (ws ${WS_PATH} → ${NOVNC_UPSTREAM_WS_PATH})`)
