@@ -216,6 +216,12 @@ export function apply(ctx: Context, config: Config): void {
     sessionTargets.set(sessionId, { targetId, at: Date.now() })
   })
 
+  // Say it out loud when the Web carrier is missing: the client half still
+  // loads, so the symptom is a window that answers 404 on every route.
+  if ((ctx as { webServer?: unknown }).webServer === undefined) {
+    logger.warn('browser-preview: ctx.webServer 不可用（DSH 版本过低，或 profile 没有 Web 服务），HTTP 路由不会注册')
+  }
+
   // webServer is optional so a headless profile still loads the plugin (CDP
   // stays useful without a Web carrier); only the routes depend on it.
   ctx.effect(

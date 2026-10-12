@@ -222,6 +222,31 @@ curl -X POST http://127.0.0.1:3080/mcp-manager/api/servers -H 'content-type: app
 - `screenshot` 返回的是 MCP 图片块：DSH 会按模型能力转成 attachment 或降级成文本占位符。
 - 若开启了 MCP 管理器的「按需模式」，Agent 只看到 `mcp_search_tools` / `mcp_describe_tool` / `mcp_execute_tool`，用它们间接调用即可。
 
+## 新机器装完是 404 怎么排查
+
+窗口出现了但状态显示「HTTP 404」，说明 **client 半加载了、host 半没有注册路由**（两半独立加载）。按顺序查：
+
+```bash
+# 1. 版本：低于 0.1.7 没有 ctx.webServer，路由无从注册
+dsh --version
+
+# 2. 插件是否真的在组合里（不是只装进了 node_modules）
+node -p "require('<profile>/package.json').dsh.profile.bundles"
+# 应包含 dsh-plugin-browser-preview
+
+# 3. 服务端本机直连（排除反代因素）
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3080/browser-preview/api/status
+
+# 4. host 半为什么没起来：看启动日志里的插件报错
+grep -iE "browser-preview|plugin.*failed|fiber" <DSH 启动日志>
+```
+
+常见结论：
+- **bundles 里没有** → 装完没重启，或者 `dsh plugin add` 没写进 profile → 重新 add 并重启
+- **`ctx.webServer` 不可用** → DSH 版本过低，或用了没有 web 服务的 profile
+- **host 半加载时抛错** → 日志里会有插件名 + 错误（例如 `@deepseek-ai/schemastery` 解析不到，通常需要宿主运行时解析层提供，用 `dsh plugin add` 安装而不是手工拷贝目录）
+- **只在本机 200、走域名 404** → 反代少了一层 `location /` 转发
+
 ## 实现要点
 
 - **进程托管**：Xvfb → Chromium → x11vnc → websockify 顺序拉起，每一步都先探测端口/socket，已存在则复用（不抢别人的实例）；所有子进程 `detached` 成组，退出时按逆序 `SIGTERM` → 3s → `SIGKILL` 整组回收，`ctx.effect` 保证 dispose 时清理。

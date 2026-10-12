@@ -155,13 +155,14 @@ function EnvPanel(): React.ReactElement {
 
   const items = env?.items ?? []
   const missing = items.filter((item) => item.needed && !item.ok)
-  const complete = missing.length === 0
+  // An empty list means the probe never answered — do not call that "complete".
+  const complete = items.length > 0 && missing.length === 0
+  const headline =
+    env === null ? '环境检测：正在检测…' : items.length === 0 ? '环境检测：后端未响应（接口 404？）' : complete ? '环境检测：完整' : `环境检测：缺少 ${missing.length} 项`
 
   return (
     <div style={styles.env}>
-      <div style={styles.envHead}>
-        环境检测：{complete ? '完整' : `缺少 ${missing.length} 项`}
-      </div>
+      <div style={styles.envHead}>{headline}</div>
       {items.map((item) => (
         <div key={item.id} style={styles.envRow}>
           <span style={{ width: 14, color: item.ok ? '#34d399' : item.needed ? '#f87171' : '#6b7280' }}>
@@ -183,7 +184,9 @@ function EnvPanel(): React.ReactElement {
           ) : null}
         </div>
       ))}
-      {items.length === 0 ? <div style={{ opacity: 0.6 }}>正在检测…</div> : null}
+      {items.length === 0 && env !== null ? (
+        <div style={{ opacity: 0.6 }}>拿不到依赖清单：host 半可能没有加载（见 README 的 404 排查）</div>
+      ) : null}
       <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
         <button type="button" style={chipStyle(true)} disabled={busy !== null || complete} onClick={() => void install()}>
           {busy === 'all' ? '安装中…' : '一键安装缺失项'}
@@ -394,9 +397,15 @@ function BrowserPreviewWindow(): React.ReactElement {
     const poll = async (): Promise<void> => {
       try {
         const res = await fetch(STATUS_PATH, { headers: { accept: 'application/json' } })
-        // Surface why: a stale tab gets 403 from the trust fence, a restarting
-        // host refuses the connection — different fixes.
-        if (!res.ok) throw new Error(`插件未响应（HTTP ${res.status}）`)
+        // Surface why: 404 means the host half never registered its routes
+        // (plugin not active / DSH too old), 403 means a stale tab.
+        if (!res.ok) {
+          throw new Error(
+            res.status === 404
+              ? '插件后端未注册路由（HTTP 404）：确认插件已在 DSH 中激活'
+              : `插件未响应（HTTP ${res.status}）`,
+          )
+        }
         const data = (await res.json()) as PreviewStatus
         if (cancelled) return
         setSnapshot(data)
