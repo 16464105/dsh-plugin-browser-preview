@@ -1,0 +1,5 @@
+# Browser Preview: Xvfb + Chromium + x11vnc + noVNC stack behind a
+# same-origin /browser-preview proxy, plus a floating preview window.
+- insert:
+    - id: browser-preview
+      name: 'dsh-plugin-browser-preview'

@@ -1,0 +1,165 @@
+/**
+ * Browser Preview host half.
+ *
+ * Runs the Xvfb + Chromium + x11vnc + noVNC chain and serves it from the DSH
+ * Web origin: `/browser-preview/*` proxies websockify (same origin, so the
+ * iframe needs no CSP relaxation) and `/browser-preview/ws` bridges the VNC
+ * WebSocket. The Agent drives the very same Chromium over CDP.
+ */
+import type { Context } from '@deepseek-ai/cordis'
+import type {} from '@deepseek-ai/dsh-host-webserver'
+import type { IncomingMessage, ServerResponse } from 'node:http'
+import type { Duplex } from 'node:stream'
+import { NOVNC_UPSTREAM_WS_PATH, ROUTE_PREFIX, STATUS_PATH, STREAM_PATH, WS_PATH } from './shared.ts'
+import { Config } from './config.ts'
+import { BrowserStack } from './stack.ts'
+import { ScreencastBridge } from './cdp.ts'
+import { proxyHttpRequest, proxyWebSocket } from './proxy.ts'
+import { acceptWebSocket, readTextFrames, sendBinary } from './ws.ts'
+
+export const name = 'browser-preview'
+
+export { Config }
+
+function sendJson(res: ServerResponse, status: number, payload: unknown): void {
+  const body = JSON.stringify(payload)
+  res.writeHead(status, {
+    'content-type': 'application/json; charset=utf-8',
+    'cache-control': 'no-store',
+  })
+  res.end(body)
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"]/g, (char) => `&#${char.charCodeAt(0)};`)
+}
+
+export function apply(ctx: Context, config: Config): void {
+  const logger = ctx.logger('browser-preview')
+  const stack = new BrowserStack(ctx, config)
+  const viewers = new Set<Duplex>()
+
+  // Screencast fans one Chromium out to every open preview window; VNC mode
+  // leaves the bridge uncreated and serves noVNC instead.
+  const bridge =
+    config.previewMode === 'screencast'
+      ? new ScreencastBridge(ctx, config.cdpPort, config.screencastFps, config.screencastQuality, (frame) => {
+          for (const viewer of viewers) {
+            try {
+              sendBinary(viewer, frame)
+            } catch {
+              viewers.delete(viewer)
+            }
+          }
+        })
+      : undefined
+
+  ctx.effect(() => async () => {
+    bridge?.stop()
+    for (const viewer of viewers) viewer.destroy()
+    viewers.clear()
+    await stack.stop()
+  }, 'browser-preview: stack')
+
+  // webServer is optional so a headless profile still loads the plugin (CDP
+  // stays useful without a Web carrier); only the routes depend on it.
+  ctx.effect(
+    () =>
+      ctx.inject(['webServer'], (web) => {
+        web.effect(
+          () =>
+            web.webServer.register({
+              kind: 'exact',
+              path: STATUS_PATH,
+              handler: async (_req: IncomingMessage, res: ServerResponse) => {
+                sendJson(res, 200, {
+                  ...stack.snapshot,
+                  viewers: viewers.size,
+                  stream: bridge?.diagnostics ?? null,
+                })
+              },
+            }),
+          `browser-preview: GET ${STATUS_PATH}`,
+        )
+
+        web.effect(
+          () =>
+            web.webServer.register({
+              kind: 'prefix',
+              path: ROUTE_PREFIX,
+              handler: async (req: IncomingMessage, res: ServerResponse) => {
+                const snapshot = stack.snapshot
+                // The noVNC leg only makes sense in VNC mode.
+                if (config.previewMode !== 'vnc') {
+                  sendJson(res, 404, { error: 'vnc preview disabled; use /browser-preview/stream' })
+                  return
+                }
+                if (!snapshot.ready) {
+                  const hint = snapshot.message ?? '浏览器栈尚未就绪'
+                  res.writeHead(503, { 'content-type': 'text/html; charset=utf-8' })
+                  res.end(
+                    `<!doctype html><meta charset="utf-8"><title>Browser Preview</title>` +
+                      `<div style="font:14px/1.6 system-ui;padding:24px;color:#ddd;background:#151515;min-height:100vh">` +
+                      `<h2 style="margin:0 0 8px">浏览器预览未就绪</h2>` +
+                      `<p style="color:#f87171">${escapeHtml(hint)}</p>` +
+                      `<pre style="white-space:pre-wrap;color:#9ca3af">apt install -y xvfb chromium x11vnc novnc websockify</pre>` +
+                      `</div>`,
+                  )
+                  return
+                }
+                await proxyHttpRequest(req, res, config.novncPort)
+              },
+            }),
+          `browser-preview: ${ROUTE_PREFIX}/*`,
+        )
+
+        web.effect(
+          () =>
+            web.webServer.registerUpgrade({
+              path: WS_PATH,
+              handler: (req: IncomingMessage, socket, head) => {
+                proxyWebSocket(req, socket, head, config.novncPort)
+              },
+            }),
+          `browser-preview: ${WS_PATH} (websocket)`,
+        )
+
+        web.effect(
+          () =>
+            web.webServer.registerUpgrade({
+              path: STREAM_PATH,
+              handler: (req: IncomingMessage, socket, head) => {
+                if (!acceptWebSocket(req, socket)) return
+                viewers.add(socket)
+                // Paint immediately instead of waiting for the page to change.
+                const latest = bridge?.currentFrame
+                if (latest !== undefined) sendBinary(socket, latest)
+                socket.on('close', () => viewers.delete(socket))
+                socket.on('error', () => viewers.delete(socket))
+                readTextFrames(socket, (text) => {
+                  try {
+                    bridge?.dispatch(JSON.parse(text) as Record<string, unknown>)
+                  } catch {
+                    /* malformed input frame: drop */
+                  }
+                })
+                if (head.length > 0) socket.emit('data', head)
+              },
+            }),
+          `browser-preview: ${STREAM_PATH} (screencast)`,
+        )
+      }).dispose,
+    'browser-preview: webServer routes',
+  )
+
+  if (config.autoStart) {
+    void stack
+      .start()
+      .then(() => bridge?.start())
+      .catch((error: unknown) => {
+        logger.warn(error instanceof Error ? error : new Error(String(error)))
+      })
+  }
+
+  ctx.logger.info(`browser-preview: routes mounted at ${ROUTE_PREFIX} (ws ${WS_PATH} → ${NOVNC_UPSTREAM_WS_PATH})`)
+}
