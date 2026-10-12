@@ -29,6 +29,12 @@ export const NOVNC_ENTRY_PATH = `${ROUTE_PREFIX}/vnc.html`
 /** Pin the preview to one page: POST { id } or POST { id: null } to follow. */
 export const TARGET_PATH = `${ROUTE_PREFIX}/api/target`
 
+/**
+ * "Show nothing": the selected conversation has not opened a page yet. The
+ * preview must be blank rather than keep the previous conversation's picture.
+ */
+export const NO_TARGET = ''
+
 /** One open page in the shared browser, shown as a tab in the preview. */
 export interface TargetSummary {
   readonly id: string

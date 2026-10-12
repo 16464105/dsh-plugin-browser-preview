@@ -10,7 +10,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import { get } from 'node:http'
-import type { TargetSummary } from './shared.ts'
+import { NO_TARGET, type TargetSummary } from './shared.ts'
 
 interface SocketLike {
   readonly readyState: number
@@ -110,7 +110,11 @@ export class ScreencastBridge {
     this.selected = id ?? undefined
     this.socket?.close()
     this.socket = undefined
-    if (!this.closed) void this.retarget()
+    // Drop the stale url so diagnostics do not claim a target is attached.
+    this.targetUrl = undefined
+    // Nothing to look up for the blank state.
+    if (this.selected === NO_TARGET || this.closed) return
+    void this.retarget()
   }
 
   async start(): Promise<void> {
@@ -137,6 +141,12 @@ export class ScreencastBridge {
   /** Follow the newest page target so an Agent opening a tab is what shows. */
   private async retarget(): Promise<void> {
     if (this.closed) return
+    // Blank state: stay detached instead of falling back to another page.
+    if (this.selected === NO_TARGET) {
+      this.socket?.close()
+      this.socket = undefined
+      return
+    }
     let targets: CdpTarget[]
     try {
       targets = await listTargets(this.port)
@@ -199,7 +209,7 @@ export class ScreencastBridge {
   }
 
   private async capture(): Promise<void> {
-    if (!this.connected) return
+    if (!this.connected || this.selected === NO_TARGET) return
     try {
       const result = await this.call('Page.captureScreenshot', { format: 'jpeg', quality: this.quality })
       const data = result?.data

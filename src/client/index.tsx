@@ -11,6 +11,7 @@ import type {} from '@deepseek-ai/dsh-api-session-controller/client'
 import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import {
   NOVNC_ENTRY_PATH,
+  NO_TARGET,
   ROUTE_PREFIX,
   STATUS_PATH,
   STREAM_PATH,
@@ -447,6 +448,15 @@ function BrowserPreviewWindow(): React.ReactElement {
                     <code>apt install -y xvfb chromium x11vnc novnc websockify</code>
                   </div>
                 ) : null}
+              </div>
+            </div>
+          ) : snapshot?.selected === NO_TARGET ? (
+            <div style={styles.ghost}>
+              <div>
+                <div>当前会话还没有打开页面</div>
+                <div style={{ marginTop: 8, opacity: 0.7 }}>
+                  让 Agent 用浏览器工具打开一个页面，画面会自动出现在这里
+                </div>
               </div>
             </div>
           ) : snapshot?.previewMode === 'vnc' ? (

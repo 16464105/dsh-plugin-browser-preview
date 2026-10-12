@@ -14,6 +14,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Duplex } from 'node:stream'
 import {
   NOVNC_UPSTREAM_WS_PATH,
+  NO_TARGET,
   ROUTE_PREFIX,
   STATUS_PATH,
   STREAM_PATH,
@@ -244,7 +245,9 @@ export function apply(ctx: Context, config: Config): void {
                 // `session` selects the tab that session opened — this is what
                 // the client sends when the user switches conversations.
                 if (typeof body?.session === 'string') {
-                  const id = sessionTargets.get(body.session) ?? null
+                  // No page for this conversation yet → blank preview, not the
+                  // previous conversation's page.
+                  const id = sessionTargets.get(body.session) ?? NO_TARGET
                   bridge?.select(id)
                   lastTargetRequest = { kind: 'session', session: body.session, resolved: id, at: Date.now() }
                   sendJson(res, 200, { session: body.session, selected: id })
