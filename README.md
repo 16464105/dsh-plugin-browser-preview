@@ -69,7 +69,7 @@ Debian/Ubuntu：`apt install -y xvfb chromium x11vnc novnc websockify fonts-noto
 | `GET /browser-preview/api/status` | 状态 + 诊断（进程、缺失二进制、抓帧计数、最后错误） |
 | `WS /browser-preview/stream` | 二进制 JPEG 帧下行；上行文本 JSON 回传鼠标/滚轮/键盘 |
 | `GET /browser-preview/api/target` | 当前所有页面 + 固定的目标 |
-| `POST /browser-preview/api/target` | 固定预览目标（`{id}`）或恢复自动跟随（`{id: null}`） |
+| `POST /browser-preview/api/target` | 按页面固定（`{id}`）、按会话切换（`{session}`）或恢复跟随最新（`{id: null}`） |
 | `GET /browser-preview/view` | 独立全屏预览页（悬浮窗 ↗ 打开；screencast 模式自带查看器，`vnc` 模式 302 到 noVNC） |
 | `WS /browser-preview/ws` | noVNC 到 websockify 的 WebSocket 桥（仅 `vnc` 模式） |
 | `/browser-preview/*` | noVNC 静态资源反代（仅 `vnc` 模式） |
@@ -100,7 +100,14 @@ Agent 侧直接连 `ws://127.0.0.1:9222/devtools/browser/<id>`（或 `/json/list
 | `back()` | 后退 |
 | `eval(expression)` | 执行 JS（调试用） |
 
-**多个会话共用一个浏览器**：`open` 每次都新建标签页并返回 `targetId`，其余工具都支持可选的 `targetId` 参数（不传则作用于最新页面），所以两个会话不会互相导航对方的页面。前端预览窗口顶部有标签栏：`自动跟随` = 跟随最新打开的页面；点某个标签 = 固定预览该页面（固定的标签被关掉后自动回退到跟随）。
+**多个会话共用一个浏览器**：`open` 每次都新建标签页并返回 `targetId`，其余工具都支持可选的 `targetId` 参数（不传则作用于最新页面），所以两个会话不会互相导航对方的页面。
+
+**预览按会话绑定**（默认行为）：
+
+1. 插件在 host 端订阅 `tools/result`，从 `mcp__browser__open` 的返回值里取出 `targetId`，结合 `exec.agent.session.id`，维护一张「会话 → 标签」映射；那个页面会立刻显示在预览窗口里。
+2. client 端订阅 `ctx.uiSession.adapter.current`（当前会话）与 `ctx.sessions.list`（会话标题）。`shell.overlay` 是 root scope，拿不到 slot 的 `sessionId` prop，所以走这两个服务而不是 props。
+3. 你在左侧**切换会话**时，预览窗口自动切到该会话打开的页面；该会话还没开过页面则保持跟随最新页面。
+4. 标签栏是**会话列表**（显示会话名，当前会话带 `●`）；`跟随会话` 开关默认开启，关掉就完全手动点选。会话对应的标签被关掉时映射自动清除。
 
 注册步骤：
 
