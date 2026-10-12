@@ -19,6 +19,41 @@ Agent 走 CDP 控制浏览器，预览窗口抓同一个实例的画面 —— �
 
 另外文档的 noVNC 通道保留为可选（`previewMode: 'vnc'`），默认通道换成了 CDP 抓帧，原因见「实测坑」。
 
+## 安装前置条件
+
+| 项 | 要求 | 说明 |
+| --- | --- | --- |
+| DSH | `>=0.1.7 <0.2.0`，**web profile** | 清单里声明了 `dsh.compatibility`，其它版本未测；headless profile 能用 CDP 但没有预览窗口 |
+| Node | `>=22`（MCP server 侧要求 `^22.19 \|\| >=24`） | 插件 host 用了全局 `WebSocket`；宿主本身也是这个要求 |
+| 浏览器 | Chromium / Google Chrome | 默认 `chromiumBin: auto`，依次探测 `chromium` → `chromium-browser` → `google-chrome` → `google-chrome-stable` |
+| 中文字体 | 任意 CJK 字体 | 缺了页面里的汉字会全变成方块（见排查第 8 条） |
+| 构建 | `npm`（装 esbuild/typescript）、`git`（可选，用于生成构建号） | 产物是 `lib/`，远端 clone 后必须 `npm install && node build.mjs` |
+| 端口 | `9222`（CDP）默认空闲 | `vnc` 模式另需 `5900`/`6080` |
+| 网络 | 能装 npm 依赖（`mcp/` 需要 `@modelcontextprotocol/sdk`） | 离线机器请在同目录预装好 `node_modules` |
+
+**默认（screencast）模式**只需要浏览器 + 字体；**Xvfb/x11vnc/novnc/websockify** 仅在 `previewMode: 'vnc'` 时才需要。
+
+各发行版包名：
+
+```bash
+# TencentOS / RHEL / CentOS（实测版本）
+dnf install -y google-noto-sans-cjk-ttc-fonts && fc-cache -f
+dnf install -y https://dl.google.com/linux/direct/google-chrome-stable_current_x86_64.rpm
+# 仅 vnc 模式：
+dnf install -y xorg-x11-server-Xvfb x11vnc novnc python3-websockify
+
+# Debian / Ubuntu
+apt install -y fonts-noto-cjk chromium   # 或 google-chrome-stable
+# 仅 vnc 模式：
+apt install -y xvfb x11vnc novnc websockify
+```
+
+装完自检（应看到 `ready: true` 和页面标题）：
+
+```bash
+curl -s http://127.0.0.1:3080/browser-preview/api/status | head -c 400
+```
+
 ## 安装
 
 ```bash
