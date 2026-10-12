@@ -81,6 +81,8 @@ async function cdpProbe(port: number, timeoutMs: number): Promise<boolean> {
 export class BrowserStack {
   private readonly procs = new Map<StackProcName, ManagedProc>()
   private phase: StackPhase = 'stopped'
+  /** Stages adopted from an already-running instance rather than spawned. */
+  private readonly adopted = new Set<StackProcName>()
   private missing: StackProcName[] = []
   private message: string | undefined
   private stopping = false
@@ -102,7 +104,7 @@ export class BrowserStack {
       novncPort: this.config.novncPort,
       running: [...this.procs.keys()],
       missing: this.missing,
-      reused: [...this.procs.values()].filter((proc) => proc.reused).map((proc) => proc.name),
+      reused: [...this.adopted],
       message: this.message,
     }
   }
@@ -110,6 +112,7 @@ export class BrowserStack {
   async start(): Promise<void> {
     if (this.phase === 'starting' || this.phase === 'ready') return
     this.phase = 'starting'
+    this.adopted.clear()
     this.message = undefined
     try {
       const missing = await this.probeBinaries()
@@ -144,17 +147,25 @@ export class BrowserStack {
     }
   }
 
-  async stop(): Promise<void> {
+  async stop(options: { keepBrowser?: boolean } = {}): Promise<void> {
     this.stopping = true
     for (const name of [...STACK_PROC_ORDER].reverse()) {
       const proc = this.procs.get(name)
       if (proc === undefined) continue
       this.procs.delete(name)
       if (proc.reused || proc.exited) continue
+      // Keep the browser on an intentional reload: its tabs (and the target
+      // ids the Agent holds) would otherwise be destroyed by every restart.
+      // The next start adopts it through the CDP port probe.
+      if (options.keepBrowser === true && name === 'chromium') {
+        this.ctx.logger.info('browser-preview: 保留正在运行的 Chromium（keepBrowser）')
+        continue
+      }
       await this.terminate(proc)
     }
     this.phase = 'stopped'
     this.stopping = false
+    if (options.keepBrowser !== true) this.adopted.clear()
   }
 
   /** Binaries absent from PATH; the status endpoint reports them verbatim. */
@@ -232,6 +243,7 @@ export class BrowserStack {
   private async ensureChromium(): Promise<void> {
     if (await cdpProbe(this.config.cdpPort, 1500)) {
       this.ctx.logger.info(`browser-preview: reusing Chromium on CDP ${this.config.cdpPort}`)
+      this.adopted.add('chromium')
       return
     }
     const bin = await this.resolveChromium()

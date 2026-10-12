@@ -142,8 +142,10 @@ export function apply(ctx: Context, config: Config): void {
   const logger = ctx.logger('browser-preview')
   const stack = new BrowserStack(ctx, config)
   const viewers = new Set<Duplex>()
-  /** session id → the tab that session opened. */
-  const sessionTargets = new Map<string, string>()
+  /** session id → the tab that session opened (plus when we learned it). */
+  const sessionTargets = new Map<string, { targetId: string; at: number }>()
+  const listSessions = (): { sessionId: string; targetId: string }[] =>
+    [...sessionTargets].map(([sessionId, entry]) => ({ sessionId, targetId: entry.targetId }))
 
   // Screencast fans one Chromium out to every open preview window; VNC mode
   // leaves the bridge uncreated and serves noVNC instead.
@@ -164,7 +166,7 @@ export function apply(ctx: Context, config: Config): void {
     bridge?.stop()
     for (const viewer of viewers) viewer.destroy()
     viewers.clear()
-    await stack.stop()
+    await stack.stop({ keepBrowser: config.keepBrowser })
   }, 'browser-preview: stack')
 
   // Bind every session to the tab its Agent opened. The tool result carries the
@@ -190,7 +192,7 @@ export function apply(ctx: Context, config: Config): void {
     // Record only. Switching the picture here would let a background session
     // steal the window from the conversation the user is reading; the client
     // decides, because only it knows which conversation is on screen.
-    sessionTargets.set(sessionId, targetId)
+    sessionTargets.set(sessionId, { targetId, at: Date.now() })
   })
 
   // webServer is optional so a headless profile still loads the plugin (CDP
@@ -204,15 +206,20 @@ export function apply(ctx: Context, config: Config): void {
               kind: 'exact',
               path: STATUS_PATH,
               handler: async (_req: IncomingMessage, res: ServerResponse) => {
-                // Drop bindings whose tab has been closed.
+                // Drop bindings whose tab has been closed. Only with a non-empty
+                // page list (an empty one means "unknown", not "nothing open"),
+                // and never a binding younger than the list snapshot.
                 const live = new Set((bridge?.targets ?? []).map((target) => target.id))
-                for (const [sessionId, targetId] of sessionTargets) {
-                  if (!live.has(targetId)) sessionTargets.delete(sessionId)
+                if (live.size > 0) {
+                  for (const [sessionId, entry] of sessionTargets) {
+                    if (Date.now() - entry.at < 10_000) continue
+                    if (!live.has(entry.targetId)) sessionTargets.delete(sessionId)
+                  }
                 }
                 sendJson(res, 200, {
                   ...stack.snapshot,
                   targets: bridge?.targets ?? [],
-                  sessions: [...sessionTargets].map(([sessionId, targetId]) => ({ sessionId, targetId })),
+                  sessions: listSessions(),
                   selected: (bridge?.diagnostics?.selected as string | null) ?? null,
                   viewers: viewers.size,
                   stream: bridge?.diagnostics ?? null,
@@ -232,7 +239,7 @@ export function apply(ctx: Context, config: Config): void {
                 if (req.method === 'GET') {
                   sendJson(res, 200, {
                     targets: bridge?.targets ?? [],
-                    sessions: [...sessionTargets].map(([sessionId, targetId]) => ({ sessionId, targetId })),
+                    sessions: listSessions(),
                     selected: (bridge?.diagnostics?.selected as string | null) ?? null,
                   })
                   return
@@ -247,7 +254,7 @@ export function apply(ctx: Context, config: Config): void {
                 if (typeof body?.session === 'string') {
                   // No page for this conversation yet → blank preview, not the
                   // previous conversation's page.
-                  const id = sessionTargets.get(body.session) ?? NO_TARGET
+                  const id = sessionTargets.get(body.session)?.targetId ?? NO_TARGET
                   bridge?.select(id)
                   lastTargetRequest = { kind: 'session', session: body.session, resolved: id, at: Date.now() }
                   sendJson(res, 200, { session: body.session, selected: id })

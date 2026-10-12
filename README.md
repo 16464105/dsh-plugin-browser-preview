@@ -60,6 +60,7 @@ Debian/Ubuntu：`apt install -y xvfb chromium x11vnc novnc websockify fonts-noto
 | `userDataDir` | `/tmp/dsh-agent-chrome` | 浏览器 profile 目录 |
 | `startTimeoutMs` | `20000` | 单步启动超时 |
 | `autoStart` | `true` | 插件加载即拉起浏览器栈 |
+| `keepBrowser` | `true` | 插件重载/DSH 重启时**保留**正在运行的 Chromium（标签和 Agent 手里的 `targetId` 才不会失效），下次启动自动复用；设为 `false` 则一起回收 |
 | `verbose` | `false` | 子进程输出全量转发到宿主日志 |
 
 ## HTTP / WebSocket 接口（同源，都在 `/browser-preview` 下）
@@ -107,7 +108,9 @@ Agent 侧直接连 `ws://127.0.0.1:9222/devtools/browser/<id>`（或 `/json/list
 1. 插件在 host 端订阅 `tools/result`，从 `mcp__browser__open` 的返回值里取出 `targetId`，结合 `exec.agent.session.id`，维护一张「会话 → 标签」映射；那个页面会立刻显示在预览窗口里。
 2. client 端订阅 `ctx.uiSession.adapter.current`（当前会话）与 `ctx.sessions.list`（会话标题）。`shell.overlay` 是 root scope，拿不到 slot 的 `sessionId` prop，所以走这两个服务而不是 props。
 3. 你在左侧**切换会话**时，预览窗口自动切到该会话打开的页面；该会话还没开过页面则保持跟随最新页面。
-4. 标签栏是**会话列表**（显示会话名，当前会话带 `●`）；`跟随会话` 开关默认开启，关掉就完全手动点选。会话对应的标签被关掉时映射自动清除。
+4. 标签栏是**会话列表**（显示会话名，当前会话带 `●`）；`跟随会话` 开关默认开启，关掉就完全手动点选。会话对应的标签被关掉时映射自动清除（新建 10 秒内的绑定除外，避免标签还没出现在列表里就被误删）。
+5. 当前会话**没打开过页面**时显示空白占位，而不是沿用上一个会话的画面。
+6. 绑定只存在内存里：DSH 重启后 Agent 下次调用任意浏览器工具（带 `open` 返回的 `targetId`）就会自动重建。`keepBrowser: true` 保证重启不会连浏览器一起销毁，所以那些 `targetId` 依然有效。
 
 注册步骤：
 

@@ -141,12 +141,6 @@ export class ScreencastBridge {
   /** Follow the newest page target so an Agent opening a tab is what shows. */
   private async retarget(): Promise<void> {
     if (this.closed) return
-    // Blank state: stay detached instead of falling back to another page.
-    if (this.selected === NO_TARGET) {
-      this.socket?.close()
-      this.socket = undefined
-      return
-    }
     let targets: CdpTarget[]
     try {
       targets = await listTargets(this.port)
@@ -157,6 +151,13 @@ export class ScreencastBridge {
     this.lastTargets = targets
       .filter((target) => target.type === 'page')
       .map((target) => ({ id: target.id, url: target.url, title: target.title ?? target.url }))
+    // Blank state: stay detached instead of falling back to another page — but
+    // keep the page list fresh, callers rely on it (e.g. pruning bindings).
+    if (this.selected === NO_TARGET) {
+      this.socket?.close()
+      this.socket = undefined
+      return
+    }
     const pages = targets.filter((target) => target.type === 'page' && target.webSocketDebuggerUrl !== undefined)
     const pinned = this.selected === undefined ? undefined : pages.find((target) => target.id === this.selected)
     // The pinned tab was closed — fall back to following.

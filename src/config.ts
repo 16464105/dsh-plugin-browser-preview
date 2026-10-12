@@ -23,6 +23,8 @@ export interface Config {
   readonly screenHeight: number
   readonly startTimeoutMs: number
   readonly autoStart: boolean
+  /** Leave Chromium running across plugin reloads so tabs survive a restart. */
+  readonly keepBrowser: boolean
   readonly verbose: boolean
 }
 
@@ -54,5 +56,6 @@ export const Config: z<Config> = z.object({
   screenHeight: z.number().default(900),
   startTimeoutMs: z.number().default(20_000),
   autoStart: z.boolean().default(true),
+  keepBrowser: z.boolean().default(true),
   verbose: z.boolean().default(false),
 })
